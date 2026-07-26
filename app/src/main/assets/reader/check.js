@@ -27,9 +27,13 @@ try {
                 : 'Reading'
             status.textContent = detail.cfi ? `${percent} · CFI ready` : percent
         })
-        Promise.resolve(view.renderer.next()).catch(error => {
-            document.body.dataset.readerStage = 'failed'
-            status.textContent = `Reader check failed: ${error.message}`
+        requestAnimationFrame(() => {
+            Promise.resolve(view.renderer.next())
+                .then(() => view.renderer.render())
+                .catch(error => {
+                    document.body.dataset.readerStage = 'failed'
+                    status.textContent = `Reader check failed: ${error.message}`
+                })
         })
         document.body.dataset.readerStage = 'initialized'
         status.textContent = ''

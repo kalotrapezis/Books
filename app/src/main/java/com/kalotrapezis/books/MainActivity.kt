@@ -36,7 +36,7 @@ import androidx.webkit.WebViewAssetLoader
 import java.io.ByteArrayInputStream
 
 private const val READER_ORIGIN = "appassets.androidplatform.net"
-private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html"
+private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=8"
 private const val EPUB_MIME_TYPE = "application/epub+zip"
 
 class MainActivity : ComponentActivity() {
@@ -136,7 +136,7 @@ private fun ReaderView(
                 settings.setSupportMultipleWindows(false)
                 settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                 webViewClient = LocalReaderClient(assetLoader)
-                loadUrl(if (bookUri == null) READER_URL else "$READER_URL?book=selected")
+                loadUrl(if (bookUri == null) READER_URL else "$READER_URL&book=selected")
             }
         },
         onRelease = WebView::destroy,
