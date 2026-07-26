@@ -89,7 +89,7 @@ Annotation, search και appearance messages προστίθενται όταν 
 Το `foliateKey` υπολογίζεται όπως στο Foliate:
 
 - χρησιμοποιείται το `metadata.identifier` όταν υπάρχει,
-- διαφορετικά `foliate:` + MD5 των πρώτων ακριβώς 10.000.000 bytes.
+- διαφορετικά `foliate:` + MD5 των πρώτων έως 10.000.000 bytes.
 
 Το MD5 εδώ είναι compatibility identifier και όχι έλεγχος ασφάλειας.
 
@@ -207,7 +207,8 @@ random-access loader.
 
 ### Φάση 1 — Πλήρες EPUB vertical slice
 
-- Room library: τίτλος, συγγραφέας, εξώφυλλο, URI, identifiers.
+- Room library: τίτλος, συγγραφέας, URI, identifiers και ανεξάρτητη πρόοδος.
+- Μικρογραφίες εξωφύλλων σε app-private αρχεία, με οριοθετημένο μέγεθος.
 - Paginated και scrolled mode.
 - TOC, RTL, reflowable και fixed-layout EPUB.
 - Themes, fonts, line height, margins και tablet columns.
@@ -221,8 +222,15 @@ random-access loader.
 - Τα native Previous/Next χρησιμοποιούν το υπάρχον origin-checked WebView
   channel, διατηρούν τη σειρά γρήγορων εντολών και χειρίζονται με ασφάλεια τις
   αλλαγές EPUB section.
+- Η Room βιβλιοθήκη αποθηκεύει πολλά EPUB με εσωτερικό UUID, συμβατό
+  `foliateKey`, SHA-256, μόνιμο SAF URI και ξεχωριστό CFI/progress ανά βιβλίο.
+  Η προηγούμενη επιλογή SharedPreferences εισάγεται μία φορά χωρίς απώλεια.
+- Το εξώφυλλο μεταφέρθηκε στο επόμενο checkpoint: θα αποθηκεύεται ως
+  οριοθετημένη μικρογραφία σε app-private αρχείο και όχι ως ανεξέλεγκτο Base64
+  μέσω WebView ή ως μεγάλο blob στη Room.
 - Επιβεβαιώθηκαν σε Android 16 συσκευή η compact phone διάταξη, η side-panel
-  διάταξη σε landscape/tablet πλάτος, η αμφίδρομη πλοήγηση και η ακριβής
+  διάταξη σε landscape/tablet πλάτος, η βιβλιοθήκη δύο πραγματικών EPUB, η
+  ανεξάρτητη επαναφορά θέσης ανά βιβλίο, η αμφίδρομη πλοήγηση και η ακριβής
   επαναφορά CFI μετά από force-stop.
 
 ### Φάση 2 — Foliate-compatible reading data
