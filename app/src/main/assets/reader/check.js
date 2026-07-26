@@ -62,11 +62,13 @@ try {
             detail?.doc?.addEventListener('click', event => {
                 if (event.target?.closest?.('a')) return
                 if (!detail.doc.defaultView?.getSelection()?.isCollapsed) return
-                const width = detail.doc.documentElement.clientWidth || 1
-                const zone = event.clientX / width
+                // Screen coordinates, not document ones: with two columns the page
+                // document is wider than the screen, so a middle tap reads as an edge.
+                const width = globalThis.innerWidth || 1
+                const zone = (event.screenX - (globalThis.screenX ?? 0)) / width
                 const paginated = view.renderer.getAttribute('flow') !== 'scrolled'
-                if (paginated && zone < 0.3) send({ type: 'TappedPrevious' })
-                else if (paginated && zone > 0.7) send({ type: 'TappedNext' })
+                if (paginated && zone < 0.25) send({ type: 'TappedPrevious' })
+                else if (paginated && zone > 0.75) send({ type: 'TappedNext' })
                 else send({ type: 'Tapped' })
             })
         })
