@@ -3,7 +3,6 @@ package com.kalotrapezis.books
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.webkit.RenderProcessGoneDetail
@@ -20,6 +19,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -28,6 +28,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -47,8 +48,11 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -65,7 +69,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -73,7 +79,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -96,12 +104,59 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 private const val READER_ORIGIN = "appassets.androidplatform.net"
-private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=26"
+private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=32"
 private const val EPUB_MIME_TYPE = "application/epub+zip"
 private const val PREFERENCES_NAME = "reader-state"
 private const val BOOK_URI_KEY = "book-uri"
 private const val LAST_CFI_KEY = "last-cfi"
 private const val SCROLLED_KEY = "scrolled"
+private const val DARK_KEY = "dark"
+
+/** Two low-glare reading themes: grey on white, and white on grey. */
+private enum class ReaderTheme(
+    val label: String,
+    val background: Color,
+    val foreground: Color,
+) {
+    GREY_ON_WHITE("Grey on white", Color(0xFFFAFAFA), Color(0xFF3A3A3A)),
+    WHITE_ON_GREY("White on grey", Color(0xFF303234), Color(0xFFE4E4E4));
+
+    fun hex(color: Color) = String.format("#%06X", color.toArgb() and 0xFFFFFF)
+
+    fun colorScheme() = if (this == GREY_ON_WHITE) {
+        lightColorScheme(
+            primary = foreground,
+            onPrimary = background,
+            secondary = foreground,
+            onSecondary = background,
+            background = background,
+            surface = background,
+            onBackground = foreground,
+            onSurface = foreground,
+            surfaceVariant = foreground.copy(alpha = 0.10f),
+            onSurfaceVariant = foreground,
+            secondaryContainer = foreground.copy(alpha = 0.10f),
+            onSecondaryContainer = foreground,
+            surfaceContainerHighest = foreground.copy(alpha = 0.08f),
+        )
+    } else {
+        darkColorScheme(
+            primary = foreground,
+            onPrimary = background,
+            secondary = foreground,
+            onSecondary = background,
+            background = background,
+            surface = background,
+            onBackground = foreground,
+            onSurface = foreground,
+            surfaceVariant = foreground.copy(alpha = 0.16f),
+            onSurfaceVariant = foreground,
+            secondaryContainer = foreground.copy(alpha = 0.16f),
+            onSecondaryContainer = foreground,
+            surfaceContainerHighest = foreground.copy(alpha = 0.12f),
+        )
+    }
+}
 private val LOCAL_SCHEMES = setOf("blob", "data")
 
 class MainActivity : ComponentActivity() {
@@ -126,6 +181,16 @@ private fun BooksApp() {
         context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     }
     var scrolled by remember { mutableStateOf(preferences.getBoolean(SCROLLED_KEY, false)) }
+    var theme by remember {
+        mutableStateOf(
+            if (preferences.getBoolean(DARK_KEY, false)) ReaderTheme.WHITE_ON_GREY
+            else ReaderTheme.GREY_ON_WHITE
+        )
+    }
+    val setTheme: (ReaderTheme) -> Unit = {
+        theme = it
+        preferences.edit().putBoolean(DARK_KEY, it == ReaderTheme.WHITE_ON_GREY).apply()
+    }
     val setScrolled: (Boolean) -> Unit = {
         scrolled = it
         preferences.edit().putBoolean(SCROLLED_KEY, it).apply()
@@ -185,7 +250,7 @@ private fun BooksApp() {
     }
     val selectedBook = library.firstOrNull { it.id == selectedBookId }
 
-    MaterialTheme {
+    MaterialTheme(colorScheme = theme.colorScheme()) {
         Surface(modifier = Modifier.fillMaxSize()) {
             BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
                 if (maxWidth >= 600.dp) {
@@ -196,6 +261,8 @@ private fun BooksApp() {
                             error = error,
                             scrolled = scrolled,
                             onSetScrolled = setScrolled,
+                            theme = theme,
+                            onSetTheme = setTheme,
                             onAddBook = launchPicker,
                             onSelectBook = selectBook,
                             modifier = Modifier.width(280.dp).fillMaxHeight(),
@@ -208,6 +275,7 @@ private fun BooksApp() {
                                 dao = dao,
                                 persistenceScope = scope,
                                 scrolled = scrolled,
+                                theme = theme,
                                 onBack = null,
                                 modifier = Modifier.weight(1f).fillMaxHeight(),
                             )
@@ -220,6 +288,8 @@ private fun BooksApp() {
                         error = error,
                         scrolled = scrolled,
                         onSetScrolled = setScrolled,
+                        theme = theme,
+                        onSetTheme = setTheme,
                         onAddBook = launchPicker,
                         onSelectBook = selectBook,
                         modifier = Modifier.fillMaxSize(),
@@ -230,6 +300,7 @@ private fun BooksApp() {
                         dao = dao,
                         persistenceScope = scope,
                         scrolled = scrolled,
+                        theme = theme,
                         onBack = { selectedBookId = null },
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -246,6 +317,8 @@ private fun LibraryPane(
     error: String,
     scrolled: Boolean,
     onSetScrolled: (Boolean) -> Unit,
+    theme: ReaderTheme,
+    onSetTheme: (ReaderTheme) -> Unit,
     onAddBook: () -> Unit,
     onSelectBook: (BookEntity) -> Unit,
     modifier: Modifier = Modifier,
@@ -255,6 +328,8 @@ private fun LibraryPane(
         SettingsDialog(
             scrolled = scrolled,
             onSetScrolled = onSetScrolled,
+            theme = theme,
+            onSetTheme = onSetTheme,
             onDismiss = { showSettings = false },
         )
     }
@@ -339,6 +414,8 @@ private fun CoverThumbnail(coverPath: String?) {
 private fun SettingsDialog(
     scrolled: Boolean,
     onSetScrolled: (Boolean) -> Unit,
+    theme: ReaderTheme,
+    onSetTheme: (ReaderTheme) -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -346,12 +423,24 @@ private fun SettingsDialog(
         confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
         title = { Text("Settings") },
         text = {
-            Row(
-                Modifier.fillMaxWidth().clickable { onSetScrolled(!scrolled) },
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text("Scrolled reading", modifier = Modifier.padding(top = 12.dp))
-                Switch(checked = scrolled, onCheckedChange = onSetScrolled)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().clickable { onSetScrolled(!scrolled) },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("Scrolled reading", modifier = Modifier.padding(top = 12.dp))
+                    Switch(checked = scrolled, onCheckedChange = onSetScrolled)
+                }
+                Text("Theme", style = MaterialTheme.typography.titleSmall)
+                ReaderTheme.entries.forEach { option ->
+                    Row(
+                        Modifier.fillMaxWidth().clickable { onSetTheme(option) },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = theme == option, onClick = { onSetTheme(option) })
+                        Text(option.label)
+                    }
+                }
             }
         },
     )
@@ -370,12 +459,16 @@ private fun ReaderScreen(
     dao: BookDao,
     persistenceScope: CoroutineScope,
     scrolled: Boolean,
+    theme: ReaderTheme,
     onBack: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     var progress by remember(book.id) { mutableStateOf(book.progressFraction) }
     var currentCfi by remember(book.id) { mutableStateOf(book.lastCfi) }
     var pages by remember(book.id) { mutableStateOf<Int?>(null) }
+    var page by remember(book.id) { mutableStateOf<Int?>(null) }
+    var chapter by remember(book.id) { mutableStateOf("") }
+    var printPage by remember(book.id) { mutableStateOf("") }
     var error by remember(book.id) { mutableStateOf("") }
     var bridge by remember(book.id) { mutableStateOf<JavaScriptReplyProxy?>(null) }
     var readerReady by remember(book.id) { mutableStateOf(false) }
@@ -406,6 +499,16 @@ private fun ReaderScreen(
     BackHandler(enabled = showChapters) { showChapters = false }
     BackHandler(enabled = !showChapters && onBack != null) { onBack?.invoke() }
 
+    LaunchedEffect(readerReady, theme) {
+        if (readerReady) {
+            send(
+                JSONObject()
+                    .put("type", "SetTheme")
+                    .put("foreground", theme.hex(theme.foreground))
+                    .put("background", theme.hex(theme.background)),
+            )
+        }
+    }
     LaunchedEffect(readerReady, selectable) {
         if (readerReady) {
             send(JSONObject().put("type", "SetSelectable").put("enabled", selectable))
@@ -436,9 +539,12 @@ private fun ReaderScreen(
                         )
                     }
                 },
-                onRelocated = { cfi, fraction, total ->
+                onRelocated = { cfi, fraction, current, total, chapterLabel, printPageLabel ->
+                    chapter = chapterLabel
+                    printPage = printPageLabel
                     progress = fraction
                     currentCfi = cfi
+                    if (current != null) page = current
                     if (total != null) pages = total
                     readerReady = true
                     persistenceScope.launch {
@@ -454,23 +560,13 @@ private fun ReaderScreen(
                     error = it
                     readerReady = false
                 },
-                // Inset the page so the overlay chrome never sits on top of the text.
-                modifier = Modifier.fillMaxSize().padding(
-                    top = if (chromeVisible) 64.dp else 0.dp,
-                    bottom = if (!chromeVisible) 0.dp else if (scrolled) 48.dp else 104.dp,
-                ),
+                onTapped = { chromeVisible = !chromeVisible },
+                onTapPage = { forward -> sendCommand(if (forward) "Next" else "Previous") },
+                // No inset: the chrome floats over the page, so the text never reflows
+                // when it appears.
+                modifier = Modifier.fillMaxSize(),
             )
         }
-
-        // Centre tap target: everything else on the page stays reachable by the reader.
-        Box(
-            Modifier.align(Alignment.Center)
-                .size(120.dp)
-                .clickable(
-                    indication = null,
-                    interactionSource = remember { MutableInteractionSource() },
-                ) { chromeVisible = !chromeVisible },
-        )
 
         if (showChapters) {
             ChaptersScreen(
@@ -504,6 +600,7 @@ private fun ReaderScreen(
         if (chromeVisible) {
             ReaderTopBar(
                 book = book,
+                chapter = chapter,
                 error = error,
                 bookmarked = bookmarked,
                 onBack = onBack,
@@ -530,6 +627,9 @@ private fun ReaderScreen(
             } else {
                 ReaderControls(
                     progress = progress,
+                    printPage = printPage,
+                    page = page,
+                    pages = pages,
                     enabled = bridge != null && readerReady,
                     onPrevious = { sendCommand("Previous") },
                     onNext = { sendCommand("Next") },
@@ -539,16 +639,17 @@ private fun ReaderScreen(
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
             }
-            Row(
+            ChromeIsland(
                 Modifier.align(Alignment.BottomCenter)
-                    .padding(bottom = if (scrolled) 8.dp else 72.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    .padding(bottom = if (scrolled) 16.dp else 132.dp),
             ) {
-                TextButton(onClick = { showChapters = true }, enabled = toc.isNotEmpty()) {
-                    Text("Chapters")
-                }
-                TextButton(onClick = { selectable = !selectable }) {
-                    Text(if (selectable) "Reading" else "Annotate")
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { showChapters = true }, enabled = toc.isNotEmpty()) {
+                        Text("Chapters")
+                    }
+                    TextButton(onClick = { selectable = !selectable }) {
+                        Text(if (selectable) "Reading" else "Annotate")
+                    }
                 }
             }
         }
@@ -634,6 +735,7 @@ private fun BookmarksDialog(
 @Composable
 private fun ReaderTopBar(
     book: BookEntity,
+    chapter: String,
     error: String,
     bookmarked: Boolean,
     onBack: (() -> Unit)?,
@@ -641,13 +743,12 @@ private fun ReaderTopBar(
     onShowBookmarks: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-        modifier = modifier.fillMaxWidth(),
-    ) {
+    ChromeIsland(modifier.padding(12.dp)) {
         Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
             if (onBack != null) {
-                TextButton(onClick = onBack) { Text("‹", style = MaterialTheme.typography.headlineMedium) }
+                TextButton(onClick = onBack) {
+                    Text("‹", style = MaterialTheme.typography.titleLarge)
+                }
             }
             Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
                 Text(
@@ -656,14 +757,12 @@ private fun ReaderTopBar(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (book.author.isNotBlank()) {
-                    Text(
-                        book.author,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+                Text(
+                    text = chapter.ifBlank { book.author },
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 if (error.isNotBlank()) {
                     Text(error, color = MaterialTheme.colorScheme.error, maxLines = 2)
                 }
@@ -762,6 +861,9 @@ private fun ScrubHandle(
 @Composable
 private fun ReaderControls(
     progress: Double?,
+    printPage: String,
+    page: Int?,
+    pages: Int?,
     enabled: Boolean,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
@@ -769,28 +871,80 @@ private fun ReaderControls(
     modifier: Modifier = Modifier,
 ) {
     var dragged by remember { mutableStateOf<Float?>(null) }
-    Surface(
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-        modifier = modifier.fillMaxWidth(),
-    ) {
-        Row(
-            Modifier.padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TextButton(onClick = onPrevious, enabled = enabled) { Text("‹") }
-            Slider(
-                value = dragged ?: progress?.toFloat()?.coerceIn(0f, 1f) ?: 0f,
-                onValueChange = { dragged = it },
-                onValueChangeFinished = {
-                    dragged?.let { onSeek(it.toDouble()) }
-                    dragged = null
-                },
-                enabled = enabled,
-                modifier = Modifier.weight(1f),
+    val haptics = LocalHapticFeedback.current
+    var lastTickedPage by remember { mutableStateOf<Int?>(null) }
+    val shown = dragged?.toDouble() ?: progress
+    ChromeIsland(modifier.padding(12.dp)) {
+        Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+            Text(
+                text = if (printPage.isNotBlank() && dragged == null) "Page $printPage"
+                    else pageLabel(shown, page, pages, dragged != null),
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.align(Alignment.CenterHorizontally),
             )
-            TextButton(onClick = onNext, enabled = enabled) { Text("›") }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onPrevious, enabled = enabled) {
+                    Text("‹", style = MaterialTheme.typography.headlineMedium)
+                }
+                Slider(
+                    value = dragged ?: progress?.toFloat()?.coerceIn(0f, 1f) ?: 0f,
+                    // The thumb follows the finger at a third of its speed: a long book
+                    // needs a slow scrub to be usable, and each page ticks under the thumb.
+                    onValueChange = { target ->
+                        val current = dragged ?: progress?.toFloat()?.coerceIn(0f, 1f) ?: 0f
+                        val next = (current + (target - current) * 0.33f).coerceIn(0f, 1f)
+                        dragged = next
+                        if (pages != null && pages > 0) {
+                            val tick = (next * pages).toInt()
+                            if (tick != lastTickedPage) {
+                                lastTickedPage = tick
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                        }
+                    },
+                    onValueChangeFinished = {
+                        dragged?.let { onSeek(it.toDouble()) }
+                        dragged = null
+                        lastTickedPage = null
+                    },
+                    enabled = enabled,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onNext, enabled = enabled) {
+                    Text("›", style = MaterialTheme.typography.headlineMedium)
+                }
+            }
         }
     }
+}
+
+/**
+ * "12 / 340" once foliate reports locations, percent otherwise. While dragging the
+ * page is estimated from the fraction, since the reader has not moved yet.
+ */
+private fun pageLabel(fraction: Double?, page: Int?, pages: Int?, dragging: Boolean): String {
+    if (pages == null || pages <= 0) return fraction.asPercent()
+    val current = if (dragging || page == null) {
+        ((fraction ?: 0.0).coerceIn(0.0, 1.0) * pages).toInt()
+    } else {
+        page
+    }
+    return "${current + 1} / $pages"
+}
+
+/** Floating translucent island, so the page stays readable underneath. */
+@Composable
+private fun ChromeIsland(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+        shape = RoundedCornerShape(24.dp),
+        // No shadow: a shadow cast over the WebView leaves white artefacts on it.
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)),
+        modifier = modifier,
+        content = content,
+    )
 }
 
 private data class TocEntry(val label: String, val href: String, val depth: Int)
@@ -821,7 +975,9 @@ private fun ReaderView(
     onBridgeReady: (JavaScriptReplyProxy) -> Unit,
     onBridgeClosed: (JavaScriptReplyProxy?) -> Unit,
     onBookReady: (String, String, String, List<TocEntry>) -> Unit,
-    onRelocated: (String, Double?, Int?) -> Unit,
+    onTapped: () -> Unit,
+    onTapPage: (Boolean) -> Unit,
+    onRelocated: (String, Double?, Int?, Int?, String, String) -> Unit,
     onReaderError: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -852,7 +1008,10 @@ private fun ReaderView(
                 .build()
 
             WebView(context).apply {
-                setBackgroundColor(Color.TRANSPARENT)
+                setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                isVerticalScrollBarEnabled = false
+                isHorizontalScrollBarEnabled = false
+                overScrollMode = WebView.OVER_SCROLL_NEVER
                 settings.javaScriptEnabled = true
                 settings.allowFileAccess = false
                 settings.allowContentAccess = false
@@ -888,10 +1047,16 @@ private fun ReaderView(
                                     cfi,
                                     data.optDouble("fraction", Double.NaN)
                                         .takeIf(Double::isFinite),
+                                    data.optInt("page", -1).takeIf { it >= 0 },
                                     data.optInt("pages", 0).takeIf { it > 0 },
+                                    data.optString("chapter").normalizedText(),
+                                    data.optString("printPage").normalizedText(),
                                 )
                             }
                         }
+                        "Tapped" -> onTapped()
+                        "TappedPrevious" -> onTapPage(false)
+                        "TappedNext" -> onTapPage(true)
                         "ReaderError" -> onReaderError(
                             data.optString("message").normalizedText()
                                 .ifBlank { "Reader error" },

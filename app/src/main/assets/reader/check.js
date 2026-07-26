@@ -1,5 +1,7 @@
 const status = document.querySelector('#status')
 let CFI
+let selectable = false
+let theme = null
 
 const send = message => globalThis.booksBridge?.postMessage(JSON.stringify(message))
 const text = value => typeof value === 'string'
@@ -54,6 +56,20 @@ try {
             toc: flattenToc(book.toc),
         })
         document.body.dataset.readerStage = 'view-open'
+        // A tap anywhere on the page toggles the native UI, except on links and
+        // when the tap ends a text selection.
+        view.addEventListener('load', ({ detail }) => {
+            detail?.doc?.addEventListener('click', event => {
+                if (event.target?.closest?.('a')) return
+                if (!detail.doc.defaultView?.getSelection()?.isCollapsed) return
+                const width = detail.doc.documentElement.clientWidth || 1
+                const zone = event.clientX / width
+                const paginated = view.renderer.getAttribute('flow') !== 'scrolled'
+                if (paginated && zone < 0.3) send({ type: 'TappedPrevious' })
+                else if (paginated && zone > 0.7) send({ type: 'TappedNext' })
+                else send({ type: 'Tapped' })
+            })
+        })
         view.addEventListener('relocate', ({ detail }) => {
             if (restoring) {
                 if (!validCfi(detail.cfi)
@@ -78,6 +94,10 @@ try {
                         ? (section.current + 1) / section.total
                         : null
                 if (Number.isFinite(fraction)) message.fraction = fraction
+                const printPage = text(detail.pageItem?.label)
+                if (printPage) message.printPage = printPage
+                const chapter = text(detail.tocItem?.label)
+                if (chapter) message.chapter = chapter
                 const { current, total } = detail.location ?? {}
                 if (Number.isFinite(current) && Number.isFinite(total) && total > 0) {
                     message.page = current
@@ -109,6 +129,13 @@ try {
                         Math.min(1, Math.max(0, command.fraction)),
                     ))
                     .catch(showReaderError)
+                return
+            }
+            if (command.type === 'SetTheme'
+                && Object.keys(command).length === 3
+                && /^#[0-9a-f]{6}$/i.test(command.foreground ?? '')
+                && /^#[0-9a-f]{6}$/i.test(command.background ?? '')) {
+                setTheme(command.foreground, command.background)
                 return
             }
             if (command.type === 'SetSelectable'
@@ -193,10 +220,28 @@ function secureBookContent(book) {
 
 /** Reading mode swallows selection so a stray touch never interrupts the page. */
 function setSelectable(enabled) {
-    const view = document.querySelector('foliate-view')
-    view?.renderer?.setStyles?.(enabled ? '' :
-        '*, *::before, *::after { -webkit-user-select: none !important;' +
-        ' user-select: none !important }')
+    selectable = enabled
+    applyStyles()
+}
+
+function setTheme(foreground, background) {
+    theme = { foreground, background }
+    document.body.style.background = background
+    applyStyles()
+}
+
+function applyStyles() {
+    const css = [
+        '* { scrollbar-width: none !important }'
+        + ' ::-webkit-scrollbar { width: 0 !important; height: 0 !important }',
+        selectable ? '' : '*, *::before, *::after { -webkit-user-select: none !important;'
+            + ' user-select: none !important }',
+        theme ? `html, body { background: ${theme.background} !important;`
+            + ` color: ${theme.foreground} !important }`
+            + ` p, div, span, li, td, h1, h2, h3, h4, h5, h6, blockquote`
+            + ` { color: ${theme.foreground} !important }` : '',
+    ].join('\n')
+    document.querySelector('foliate-view')?.renderer?.setStyles?.(css)
 }
 
 /** Flat TOC: label, href and depth, bounded so a hostile book cannot flood the bridge. */

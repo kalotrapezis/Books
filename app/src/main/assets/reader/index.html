@@ -13,10 +13,12 @@
     #status { font-weight: 600; }
     #status:not(:empty) { padding: 1rem; }
     foliate-view { position: fixed; inset: 0; display: block; }
+    * { scrollbar-width: none; }
+    ::-webkit-scrollbar { width: 0; height: 0; display: none; }
   </style>
 </head>
 <body>
   <p id="status">Checking bundled foliate-js…</p>
-  <script type="module" src="./check.js?v=17"></script>
+  <script type="module" src="./check.js?v=32"></script>
 </body>
 </html>
