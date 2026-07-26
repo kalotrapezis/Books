@@ -9,7 +9,7 @@ android {
 
     defaultConfig {
         applicationId = "com.kalotrapezis.books"
-        minSdk = 23
+        minSdk = 24
         targetSdk = 36
         versionCode = 1
         versionName = "0.0.1"
@@ -17,6 +17,10 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    sourceSets.named("main") {
+        assets.setSrcDirs(listOf("src/main/assets", "../third_party/foliate-js"))
     }
 
     compileOptions {
@@ -31,5 +35,6 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.webkit:webkit:1.16.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
