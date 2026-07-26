@@ -214,6 +214,17 @@ random-access loader.
 - Progress και CFI restore.
 - Adaptive phone/tablet UI.
 
+Τρέχουσα πρόοδος:
+
+- Ο reader στέλνει ελεγμένα `BookReady`, `Relocated` και `ReaderError` events
+  στη native UI και εμφανίζει τίτλο, συγγραφέα και ποσοστό ανάγνωσης.
+- Τα native Previous/Next χρησιμοποιούν το υπάρχον origin-checked WebView
+  channel, διατηρούν τη σειρά γρήγορων εντολών και χειρίζονται με ασφάλεια τις
+  αλλαγές EPUB section.
+- Επιβεβαιώθηκαν σε Android 16 συσκευή η compact phone διάταξη, η side-panel
+  διάταξη σε landscape/tablet πλάτος, η αμφίδρομη πλοήγηση και η ακριβής
+  επαναφορά CFI μετά από force-stop.
+
 ### Φάση 2 — Foliate-compatible reading data
 
 - Bookmarks.

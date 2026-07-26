@@ -3,9 +3,9 @@
 Books is an Android e-book reader for phones and tablets, inspired by Foliate
 and designed for compatibility with Foliate reading data.
 
-The project is currently in its technical-spike phase. The first goal is to
-validate a secure, offline EPUB reader using Kotlin, Jetpack Compose, Android
-WebView, and a pinned revision of `foliate-js`.
+The technical spike is complete. Phase 1 is building the full EPUB reading
+slice on the validated Kotlin, Jetpack Compose, Android WebView, and pinned
+`foliate-js` foundation.
 
 See [Plan.md](Plan.md) for the staged implementation plan and
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the license audit.

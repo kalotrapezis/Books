@@ -17,8 +17,14 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -31,15 +37,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
 import java.io.ByteArrayInputStream
 import org.json.JSONObject
 
 private const val READER_ORIGIN = "appassets.androidplatform.net"
-private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=16"
+private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=17"
 private const val EPUB_MIME_TYPE = "application/epub+zip"
 private const val PREFERENCES_NAME = "reader-state"
 private const val BOOK_URI_KEY = "book-uri"
@@ -63,6 +71,12 @@ private fun BooksApp() {
     var bookUri by remember {
         mutableStateOf(preferences.getString(BOOK_URI_KEY, null)?.let(Uri::parse))
     }
+    var title by remember(bookUri) { mutableStateOf("") }
+    var author by remember(bookUri) { mutableStateOf("") }
+    var progress by remember(bookUri) { mutableStateOf<Double?>(null) }
+    var error by remember(bookUri) { mutableStateOf("") }
+    var bridge by remember(bookUri) { mutableStateOf<JavaScriptReplyProxy?>(null) }
+    var readerReady by remember(bookUri) { mutableStateOf(false) }
     val openBook = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             runCatching {
@@ -81,33 +95,130 @@ private fun BooksApp() {
 
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-            ) {
-                Text(text = "Books", style = MaterialTheme.typography.headlineLarge)
-                Text(
-                    text = if (bookUri == null) {
-                        "Offline EPUB reader"
-                    } else {
-                        "Reading selected book"
-                    },
-                    modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
-                )
-                Button(
-                    onClick = { openBook.launch(arrayOf(EPUB_MIME_TYPE)) },
-                    modifier = Modifier.padding(bottom = 12.dp),
-                ) {
-                    Text(if (bookUri == null) "Open EPUB" else "Open another EPUB")
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val sendCommand: (String) -> Unit = { type ->
+                    runCatching { bridge?.postMessage(JSONObject().put("type", type).toString()) }
+                        .onFailure { error = "Reader command failed: ${it.message ?: "unknown error"}" }
                 }
-                key(bookUri) {
-                    ReaderView(
-                        bookUri = bookUri,
-                        modifier = Modifier.fillMaxSize(),
+                val controls: @Composable () -> Unit = {
+                    ReaderControls(
+                        progress = progress,
+                        enabled = bridge != null && readerReady,
+                        onPrevious = { sendCommand("Previous") },
+                        onNext = { sendCommand("Next") },
                     )
                 }
+                val reader: @Composable (Modifier) -> Unit = { modifier ->
+                    key(bookUri) {
+                        ReaderView(
+                            bookUri = bookUri,
+                            onBridgeReady = { bridge = it },
+                            onBridgeClosed = { closedBridge ->
+                                if (bridge === closedBridge) {
+                                    bridge = null
+                                    readerReady = false
+                                }
+                            },
+                            onBookReady = { newTitle, newAuthor ->
+                                title = newTitle
+                                author = newAuthor
+                                error = ""
+                            },
+                            onRelocated = { fraction ->
+                                progress = fraction
+                                readerReady = true
+                            },
+                            onReaderError = {
+                                error = it
+                                readerReady = false
+                            },
+                            modifier = modifier,
+                        )
+                    }
+                }
+                if (maxWidth >= 600.dp) {
+                    Row(Modifier.fillMaxSize()) {
+                        Column(
+                            modifier = Modifier
+                                .width(260.dp)
+                                .fillMaxHeight()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            ReaderDetails(bookUri, title, author, error)
+                            Button(onClick = { openBook.launch(arrayOf(EPUB_MIME_TYPE)) }) {
+                                Text(if (bookUri == null) "Open EPUB" else "Open another EPUB")
+                            }
+                            controls()
+                        }
+                        reader(Modifier.weight(1f).fillMaxHeight())
+                    }
+                } else {
+                    Column(Modifier.fillMaxSize()) {
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                            Text(text = "Books", style = MaterialTheme.typography.titleLarge)
+                            Text(
+                                text = title.ifBlank { if (bookUri == null) "Offline EPUB reader" else "Opening EPUB…" },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (author.isNotBlank()) {
+                                Text(author, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            if (error.isNotBlank()) {
+                                Text(error, color = MaterialTheme.colorScheme.error, maxLines = 2)
+                            }
+                            Button(
+                                onClick = { openBook.launch(arrayOf(EPUB_MIME_TYPE)) },
+                                modifier = Modifier.padding(top = 8.dp),
+                            ) {
+                                Text(if (bookUri == null) "Open EPUB" else "Open another EPUB")
+                            }
+                        }
+                        reader(Modifier.fillMaxWidth().weight(1f))
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                            controls()
+                        }
+                    }
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun ReaderDetails(bookUri: Uri?, title: String, author: String, error: String) {
+    Text(text = "Books", style = MaterialTheme.typography.titleLarge)
+    Text(
+        text = title.ifBlank { if (bookUri == null) "Offline EPUB reader" else "Opening EPUB…" },
+        style = MaterialTheme.typography.titleMedium,
+        maxLines = 3,
+        overflow = TextOverflow.Ellipsis,
+    )
+    if (author.isNotBlank()) Text(author, maxLines = 3, overflow = TextOverflow.Ellipsis)
+    if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
+}
+
+@Composable
+private fun ReaderControls(
+    progress: Double?,
+    enabled: Boolean,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Button(onClick = onPrevious, enabled = enabled) {
+            Text("Previous")
+        }
+        Text(
+            text = progress?.let { "${(it * 100).toInt()}%" } ?: "Reading",
+            modifier = Modifier.padding(top = 12.dp),
+        )
+        Button(onClick = onNext, enabled = enabled) {
+            Text("Next")
         }
     }
 }
@@ -116,6 +227,11 @@ private fun BooksApp() {
 @SuppressLint("SetJavaScriptEnabled")
 private fun ReaderView(
     bookUri: Uri?,
+    onBridgeReady: (JavaScriptReplyProxy) -> Unit,
+    onBridgeClosed: (JavaScriptReplyProxy?) -> Unit,
+    onBookReady: (String, String) -> Unit,
+    onRelocated: (Double?) -> Unit,
+    onReaderError: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     AndroidView(
@@ -160,34 +276,53 @@ private fun ReaderView(
                 settings.javaScriptCanOpenWindowsAutomatically = false
                 settings.setSupportMultipleWindows(false)
                 settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                webViewClient = LocalReaderClient(assetLoader)
+                webViewClient = LocalReaderClient(assetLoader, onBridgeClosed)
                 WebViewCompat.addWebMessageListener(
                     this,
                     "booksBridge",
                     setOf("https://$READER_ORIGIN"),
-                ) { _, message, sourceOrigin, isMainFrame, _ ->
+                ) { view, message, sourceOrigin, isMainFrame, replyProxy ->
                     if (!isMainFrame || sourceOrigin.host != READER_ORIGIN) return@addWebMessageListener
+                    view.tag = replyProxy
+                    onBridgeReady(replyProxy)
                     val messageData = message.data ?: return@addWebMessageListener
                     val data =
                         runCatching { JSONObject(messageData) }.getOrNull()
                             ?: return@addWebMessageListener
-                    val cfi = data.optString("cfi")
-                    if (data.optString("type") == "Relocated"
-                        && cfi.startsWith("epubcfi(")
-                        && cfi.length <= 8192
-                    ) {
-                        preferences.edit().putString(LAST_CFI_KEY, cfi).apply()
+                    when (data.optString("type")) {
+                        "BookReady" -> onBookReady(
+                            data.optString("title").normalizedText(),
+                            data.optString("author").normalizedText(),
+                        )
+                        "Relocated" -> {
+                            val cfi = data.optString("cfi")
+                            if (cfi.startsWith("epubcfi(") && cfi.length <= 8192) {
+                                preferences.edit().putString(LAST_CFI_KEY, cfi).apply()
+                                onRelocated(
+                                    data.optDouble("fraction", Double.NaN).takeIf(Double::isFinite),
+                                )
+                            }
+                        }
+                        "ReaderError" -> onReaderError(
+                            data.optString("message").normalizedText().ifBlank { "Reader error" },
+                        )
                     }
                 }
                 loadUrl(if (bookUri == null) READER_URL else "$READER_URL&book=selected")
             }
         },
-        onRelease = WebView::destroy,
+        onRelease = { view ->
+            onBridgeClosed(view.tag as? JavaScriptReplyProxy)
+            view.destroy()
+        },
     )
 }
 
+private fun String.normalizedText() = replace(Regex("\\s+"), " ").trim().take(512)
+
 private class LocalReaderClient(
     private val assetLoader: WebViewAssetLoader,
+    private val onBridgeClosed: (JavaScriptReplyProxy?) -> Unit,
 ) : WebViewClient() {
     override fun shouldInterceptRequest(
         view: WebView,
@@ -208,6 +343,7 @@ private class LocalReaderClient(
         view: WebView,
         detail: RenderProcessGoneDetail,
     ): Boolean {
+        onBridgeClosed(view.tag as? JavaScriptReplyProxy)
         view.destroy()
         return true
     }
