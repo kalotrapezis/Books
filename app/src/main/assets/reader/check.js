@@ -49,6 +49,7 @@ try {
             type: 'BookReady',
             title: text(languageMap(book.metadata?.title)) || 'Untitled book',
             author: contributor(book.metadata?.author),
+            identifier: text(book.metadata?.identifier),
         })
         document.body.dataset.readerStage = 'view-open'
         view.addEventListener('relocate', ({ detail }) => {
