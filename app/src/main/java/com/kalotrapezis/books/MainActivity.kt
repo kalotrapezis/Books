@@ -13,6 +13,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -95,11 +96,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 private const val READER_ORIGIN = "appassets.androidplatform.net"
-private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=20"
+private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=26"
 private const val EPUB_MIME_TYPE = "application/epub+zip"
 private const val PREFERENCES_NAME = "reader-state"
 private const val BOOK_URI_KEY = "book-uri"
 private const val LAST_CFI_KEY = "last-cfi"
+private val LOCAL_SCHEMES = setOf("blob", "data")
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -393,6 +395,9 @@ private fun ReaderScreen(
             )
         }
     }
+    BackHandler(enabled = showChapters) { showChapters = false }
+    BackHandler(enabled = !showChapters && onBack != null) { onBack?.invoke() }
+
     LaunchedEffect(readerReady, selectable) {
         if (readerReady) {
             send(JSONObject().put("type", "SetSelectable").put("enabled", selectable))
@@ -960,15 +965,20 @@ private class LocalReaderClient(
         request: WebResourceRequest,
     ): WebResourceResponse? {
         val url = request.url
-        return if (url.scheme == "https" && url.host == READER_ORIGIN) {
-            assetLoader.shouldInterceptRequest(url) ?: blockedResponse()
-        } else {
-            blockedResponse()
+        return when {
+            url.scheme == "https" && url.host == READER_ORIGIN ->
+                assetLoader.shouldInterceptRequest(url) ?: blockedResponse()
+            // Book sections and their resources are handed to the WebView as blob:/data:
+            // URLs the reader itself created; blocking those leaves an empty page. The
+            // app has no INTERNET permission, so nothing else can reach the network.
+            url.scheme in LOCAL_SCHEMES -> null
+            else -> blockedResponse()
         }
     }
 
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
-        request.url.scheme != "https" || request.url.host != READER_ORIGIN
+        !(request.url.scheme == "https" && request.url.host == READER_ORIGIN)
+            && request.url.scheme !in LOCAL_SCHEMES
 
     override fun onRenderProcessGone(
         view: WebView,

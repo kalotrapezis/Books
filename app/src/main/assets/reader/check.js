@@ -67,7 +67,7 @@ try {
             const percent = Number.isFinite(detail.fraction)
                 ? `${Math.round(detail.fraction * 100)}%`
                 : 'Reading'
-            status.textContent = detail.cfi ? `${percent} · CFI ready` : percent
+            status.hidden = true
             if (validCfi(detail.cfi)) {
                 const message = { type: 'Relocated', cfi: detail.cfi }
                 const section = detail.section
