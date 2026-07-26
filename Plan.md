@@ -225,9 +225,11 @@ random-access loader.
 - Η Room βιβλιοθήκη αποθηκεύει πολλά EPUB με εσωτερικό UUID, συμβατό
   `foliateKey`, SHA-256, μόνιμο SAF URI και ξεχωριστό CFI/progress ανά βιβλίο.
   Η προηγούμενη επιλογή SharedPreferences εισάγεται μία φορά χωρίς απώλεια.
-- Το εξώφυλλο μεταφέρθηκε στο επόμενο checkpoint: θα αποθηκεύεται ως
-  οριοθετημένη μικρογραφία σε app-private αρχείο και όχι ως ανεξέλεγκτο Base64
-  μέσω WebView ή ως μεγάλο blob στη Room.
+- Το εξώφυλλο εξάγεται πλέον native από το EPUB zip (container.xml → OPF →
+  `cover-image` ή EPUB 2 `meta name="cover"`), αποθηκεύεται ως οριοθετημένη
+  μικρογραφία JPEG (μέγιστη πλευρά 512 px) σε app-private αρχείο και η Room
+  κρατά μόνο το path (`coverPath`, migration 1→2). Δεν περνά τίποτα από το
+  WebView ούτε αποθηκεύεται blob. Εκκρεμεί επαλήθευση σε συσκευή.
 - Επιβεβαιώθηκαν σε Android 16 συσκευή η compact phone διάταξη, η side-panel
   διάταξη σε landscape/tablet πλάτος, η βιβλιοθήκη δύο πραγματικών EPUB, η
   ανεξάρτητη επαναφορά θέσης ανά βιβλίο, η αμφίδρομη πλοήγηση και η ακριβής

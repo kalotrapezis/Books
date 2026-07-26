@@ -16,6 +16,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -24,6 +26,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
@@ -40,10 +43,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,6 +62,7 @@ import com.kalotrapezis.books.data.BookDao
 import com.kalotrapezis.books.data.BookEntity
 import com.kalotrapezis.books.data.BookIdentifiers
 import com.kalotrapezis.books.data.BooksDatabase
+import com.kalotrapezis.books.data.CoverExtractor
 import java.io.ByteArrayInputStream
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
@@ -88,11 +96,22 @@ private fun BooksApp() {
     var selectedBookId by remember { mutableStateOf<String?>(null) }
     var initialized by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
+    val coverAttempts = remember { mutableSetOf<String>() }
 
     LaunchedEffect(dao) {
         migrateLegacyBook(context, dao)?.let { error = it }
         dao.observeLibrary().collect { books ->
             library = books
+            // ponytail: books added before covers existed, and books whose cover extraction
+            // failed, are retried once per session; add a persisted "tried" flag if the
+            // repeated zip scan ever shows up on startup.
+            books.filter { it.coverPath == null && it.id !in coverAttempts }.forEach { book ->
+                coverAttempts += book.id
+                launch(Dispatchers.IO) {
+                    CoverExtractor.extract(context, Uri.parse(book.uri), book.id)
+                        ?.let { dao.updateCover(book.id, it) }
+                }
+            }
             if (!initialized) {
                 selectedBookId = books.firstOrNull()?.id
                 initialized = true
@@ -225,19 +244,45 @@ private fun LibraryBookRow(book: BookEntity, selected: Boolean, onClick: () -> U
         else MaterialTheme.colorScheme.surface,
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
     ) {
-        Column(Modifier.padding(horizontal = 8.dp, vertical = 12.dp)) {
-            Text(
-                text = book.title.ifBlank { "Opening EPUB…" },
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (book.author.isNotBlank()) {
-                Text(book.author, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(
+            Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            CoverThumbnail(book.coverPath)
+            Column {
+                Text(
+                    text = book.title.ifBlank { "Opening EPUB…" },
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (book.author.isNotBlank()) {
+                    Text(book.author, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Text(book.progressFraction.asPercent())
             }
-            Text(book.progressFraction.asPercent())
         }
     }
+}
+
+@Composable
+private fun CoverThumbnail(coverPath: String?) {
+    val bitmap by produceState<ImageBitmap?>(null, coverPath) {
+        value = coverPath?.let {
+            withContext(Dispatchers.IO) {
+                runCatching { BitmapFactory.decodeFile(it)?.asImageBitmap() }.getOrNull()
+            }
+        }
+    }
+    val modifier = Modifier.width(48.dp).height(72.dp)
+    bitmap?.let {
+        Image(
+            bitmap = it,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = modifier,
+        )
+    } ?: Surface(color = MaterialTheme.colorScheme.surfaceVariant, modifier = modifier) {}
 }
 
 @Composable
@@ -478,7 +523,9 @@ private suspend fun addOrOpenBook(
         lastOpenedAt = now,
     )
     dao.upsert(book)
-    book
+    val coverPath = CoverExtractor.extract(context, uri, book.id)
+    if (coverPath != null) dao.updateCover(book.id, coverPath)
+    book.copy(coverPath = coverPath)
 }
 
 private suspend fun migrateLegacyBook(context: Context, dao: BookDao): String? {

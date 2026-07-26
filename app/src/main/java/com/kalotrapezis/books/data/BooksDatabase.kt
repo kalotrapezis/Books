@@ -12,6 +12,8 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Update
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Entity(
@@ -28,6 +30,7 @@ data class BookEntity(
     val sha256: String,
     val lastCfi: String?,
     val progressFraction: Double?,
+    val coverPath: String? = null,
     val addedAt: Long,
     val lastOpenedAt: Long,
 )
@@ -58,6 +61,7 @@ abstract class BookDao {
                     addedAt = existing.addedAt,
                     lastCfi = book.lastCfi ?: existing.lastCfi,
                     progressFraction = book.progressFraction ?: existing.progressFraction,
+                    coverPath = book.coverPath ?: existing.coverPath,
                 )
             )
         }
@@ -83,9 +87,12 @@ abstract class BookDao {
 
     @Query("UPDATE books SET lastOpenedAt = :timestamp WHERE id = :id")
     abstract suspend fun markOpened(id: String, timestamp: Long)
+
+    @Query("UPDATE books SET coverPath = :coverPath WHERE id = :id")
+    abstract suspend fun updateCover(id: String, coverPath: String?)
 }
 
-@Database(entities = [BookEntity::class], version = 1, exportSchema = true)
+@Database(entities = [BookEntity::class], version = 2, exportSchema = true)
 abstract class BooksDatabase : RoomDatabase() {
     abstract fun bookDao(): BookDao
 
@@ -97,7 +104,13 @@ abstract class BooksDatabase : RoomDatabase() {
                 context.applicationContext,
                 BooksDatabase::class.java,
                 "books.db",
-            ).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2).build().also { instance = it }
+        }
+
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE books ADD COLUMN coverPath TEXT")
+            }
         }
     }
 }
