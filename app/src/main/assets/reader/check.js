@@ -45,11 +45,13 @@ try {
         const view = document.createElement('foliate-view')
         document.body.append(view)
         await view.open(book)
+        setSelectable(false)
         send({
             type: 'BookReady',
             title: text(languageMap(book.metadata?.title)) || 'Untitled book',
             author: contributor(book.metadata?.author),
             identifier: text(book.metadata?.identifier),
+            toc: flattenToc(book.toc),
         })
         document.body.dataset.readerStage = 'view-open'
         view.addEventListener('relocate', ({ detail }) => {
@@ -76,6 +78,11 @@ try {
                         ? (section.current + 1) / section.total
                         : null
                 if (Number.isFinite(fraction)) message.fraction = fraction
+                const { current, total } = detail.location ?? {}
+                if (Number.isFinite(current) && Number.isFinite(total) && total > 0) {
+                    message.page = current
+                    message.pages = total
+                }
                 send(message)
             }
         }
@@ -92,6 +99,38 @@ try {
                 && Object.keys(command).length === 2
                 && ['paginated', 'scrolled'].includes(command.flow)) {
                 view.renderer.setAttribute('flow', command.flow)
+                return
+            }
+            if (command.type === 'GoToFraction'
+                && Object.keys(command).length === 2
+                && Number.isFinite(command.fraction)) {
+                commandQueue = commandQueue
+                    .then(() => view.goToFraction(
+                        Math.min(1, Math.max(0, command.fraction)),
+                    ))
+                    .catch(showReaderError)
+                return
+            }
+            if (command.type === 'SetSelectable'
+                && Object.keys(command).length === 2
+                && typeof command.enabled === 'boolean') {
+                setSelectable(command.enabled)
+                return
+            }
+            if (command.type === 'GoToHref'
+                && Object.keys(command).length === 2
+                && typeof command.href === 'string' && command.href.length <= 2048) {
+                commandQueue = commandQueue
+                    .then(() => view.goTo(command.href))
+                    .catch(showReaderError)
+                return
+            }
+            if (command.type === 'GoToCfi'
+                && Object.keys(command).length === 2
+                && validCfi(command.cfi)) {
+                commandQueue = commandQueue
+                    .then(() => view.goTo(command.cfi))
+                    .catch(showReaderError)
                 return
             }
             if (Object.keys(command).length !== 1
@@ -150,6 +189,25 @@ function secureBookContent(book) {
         event.detail.data = Promise.resolve(event.detail.data)
             .then(data => sanitizeDocument(data, event.detail.type))
     })
+}
+
+/** Reading mode swallows selection so a stray touch never interrupts the page. */
+function setSelectable(enabled) {
+    const view = document.querySelector('foliate-view')
+    view?.renderer?.setStyles?.(enabled ? '' :
+        '*, *::before, *::after { -webkit-user-select: none !important;' +
+        ' user-select: none !important }')
+}
+
+/** Flat TOC: label, href and depth, bounded so a hostile book cannot flood the bridge. */
+function flattenToc(items, depth = 0, out = []) {
+    for (const item of items ?? []) {
+        if (out.length >= 500) break
+        const href = typeof item?.href === 'string' ? item.href.slice(0, 2048) : ''
+        if (href) out.push({ label: text(item.label) || 'Untitled', href, depth })
+        if (item?.subitems) flattenToc(item.subitems, depth + 1, out)
+    }
+    return out
 }
 
 function showReaderError(error) {

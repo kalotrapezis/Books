@@ -31,6 +31,8 @@ data class BookEntity(
     val lastCfi: String?,
     val progressFraction: Double?,
     val coverPath: String? = null,
+    /** Foliate-compatible JSON array of CFI strings. */
+    val bookmarks: String? = null,
     val addedAt: Long,
     val lastOpenedAt: Long,
 )
@@ -90,9 +92,12 @@ abstract class BookDao {
 
     @Query("UPDATE books SET coverPath = :coverPath WHERE id = :id")
     abstract suspend fun updateCover(id: String, coverPath: String?)
+
+    @Query("UPDATE books SET bookmarks = :bookmarks WHERE id = :id")
+    abstract suspend fun updateBookmarks(id: String, bookmarks: String?)
 }
 
-@Database(entities = [BookEntity::class], version = 2, exportSchema = true)
+@Database(entities = [BookEntity::class], version = 3, exportSchema = true)
 abstract class BooksDatabase : RoomDatabase() {
     abstract fun bookDao(): BookDao
 
@@ -104,12 +109,18 @@ abstract class BooksDatabase : RoomDatabase() {
                 context.applicationContext,
                 BooksDatabase::class.java,
                 "books.db",
-            ).addMigrations(MIGRATION_1_2).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
         }
 
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE books ADD COLUMN coverPath TEXT")
+            }
+        }
+
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE books ADD COLUMN bookmarks TEXT")
             }
         }
     }

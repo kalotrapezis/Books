@@ -17,8 +17,16 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import android.graphics.BitmapFactory
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -32,8 +40,15 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -47,8 +62,14 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Fill
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -70,10 +91,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 
 private const val READER_ORIGIN = "appassets.androidplatform.net"
-private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=19"
+private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=20"
 private const val EPUB_MIME_TYPE = "application/epub+zip"
 private const val PREFERENCES_NAME = "reader-state"
 private const val BOOK_URI_KEY = "book-uri"
@@ -97,6 +119,7 @@ private fun BooksApp() {
     var initialized by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     val coverAttempts = remember { mutableSetOf<String>() }
+    var scrolled by remember { mutableStateOf(false) }
 
     LaunchedEffect(dao) {
         migrateLegacyBook(context, dao)?.let { error = it }
@@ -161,6 +184,8 @@ private fun BooksApp() {
                             books = library,
                             selectedBookId = selectedBookId,
                             error = error,
+                            scrolled = scrolled,
+                            onSetScrolled = { scrolled = it },
                             onAddBook = launchPicker,
                             onSelectBook = selectBook,
                             modifier = Modifier.width(280.dp).fillMaxHeight(),
@@ -172,9 +197,8 @@ private fun BooksApp() {
                                 book = selectedBook,
                                 dao = dao,
                                 persistenceScope = scope,
-                                onAddBook = launchPicker,
-                                showLibraryAction = false,
-                                onShowLibrary = {},
+                                scrolled = scrolled,
+                                onBack = null,
                                 modifier = Modifier.weight(1f).fillMaxHeight(),
                             )
                         }
@@ -184,6 +208,8 @@ private fun BooksApp() {
                         books = library,
                         selectedBookId = null,
                         error = error,
+                        scrolled = scrolled,
+                        onSetScrolled = { scrolled = it },
                         onAddBook = launchPicker,
                         onSelectBook = selectBook,
                         modifier = Modifier.fillMaxSize(),
@@ -193,9 +219,8 @@ private fun BooksApp() {
                         book = selectedBook,
                         dao = dao,
                         persistenceScope = scope,
-                        onAddBook = launchPicker,
-                        showLibraryAction = true,
-                        onShowLibrary = { selectedBookId = null },
+                        scrolled = scrolled,
+                        onBack = { selectedBookId = null },
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -209,12 +234,27 @@ private fun LibraryPane(
     books: List<BookEntity>,
     selectedBookId: String?,
     error: String,
+    scrolled: Boolean,
+    onSetScrolled: (Boolean) -> Unit,
     onAddBook: () -> Unit,
     onSelectBook: (BookEntity) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var showSettings by remember { mutableStateOf(false) }
+    if (showSettings) {
+        SettingsDialog(
+            scrolled = scrolled,
+            onSetScrolled = onSetScrolled,
+            onDismiss = { showSettings = false },
+        )
+    }
     Column(modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Books", style = MaterialTheme.typography.headlineMedium)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("Books", style = MaterialTheme.typography.headlineMedium)
+            IconButton(onClick = { showSettings = true }) {
+                Icon(Icons.Filled.Settings, contentDescription = "Settings")
+            }
+        }
         Button(onClick = onAddBook) { Text("Add EPUB") }
         if (error.isNotBlank()) {
             Text(error, color = MaterialTheme.colorScheme.error)
@@ -286,6 +326,28 @@ private fun CoverThumbnail(coverPath: String?) {
 }
 
 @Composable
+private fun SettingsDialog(
+    scrolled: Boolean,
+    onSetScrolled: (Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+        title = { Text("Settings") },
+        text = {
+            Row(
+                Modifier.fillMaxWidth().clickable { onSetScrolled(!scrolled) },
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("Scrolled reading", modifier = Modifier.padding(top = 12.dp))
+                Switch(checked = scrolled, onCheckedChange = onSetScrolled)
+            }
+        },
+    )
+}
+
+@Composable
 private fun EmptyReader(modifier: Modifier = Modifier) {
     Column(modifier.padding(24.dp), verticalArrangement = Arrangement.Center) {
         Text("Select a book from your library.", style = MaterialTheme.typography.titleLarge)
@@ -297,61 +359,47 @@ private fun ReaderScreen(
     book: BookEntity,
     dao: BookDao,
     persistenceScope: CoroutineScope,
-    onAddBook: () -> Unit,
-    showLibraryAction: Boolean,
-    onShowLibrary: () -> Unit,
+    scrolled: Boolean,
+    onBack: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     var progress by remember(book.id) { mutableStateOf(book.progressFraction) }
+    var currentCfi by remember(book.id) { mutableStateOf(book.lastCfi) }
+    var pages by remember(book.id) { mutableStateOf<Int?>(null) }
     var error by remember(book.id) { mutableStateOf("") }
     var bridge by remember(book.id) { mutableStateOf<JavaScriptReplyProxy?>(null) }
     var readerReady by remember(book.id) { mutableStateOf(false) }
-    var scrolled by remember(book.id) { mutableStateOf(false) }
+    var chromeVisible by remember(book.id) { mutableStateOf(true) }
+    var toc by remember(book.id) { mutableStateOf(emptyList<TocEntry>()) }
+    var showChapters by remember(book.id) { mutableStateOf(false) }
+    var showBookmarks by remember(book.id) { mutableStateOf(false) }
+    var selectable by remember(book.id) { mutableStateOf(false) }
     val send: (JSONObject) -> Unit = { command ->
         runCatching { bridge?.postMessage(command.toString()) }
             .onFailure { error = "Reader command failed: ${it.message ?: "unknown error"}" }
     }
     val sendCommand: (String) -> Unit = { type -> send(JSONObject().put("type", type)) }
+    val bookmarks = remember(book.bookmarks) { book.bookmarks.toCfiList() }
+    // ponytail: bookmarks match on the exact CFI string; compare with epubcfi.js in the
+    // reader if a bookmark ever needs to survive a re-render that shifts the CFI.
+    val bookmarked = currentCfi != null && currentCfi in bookmarks
 
-    Column(modifier) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                if (showLibraryAction) {
-                    TextButton(onClick = onShowLibrary) { Text("Library") }
-                } else {
-                    Text("Books", style = MaterialTheme.typography.titleLarge)
-                }
-                Row {
-                    TextButton(
-                        onClick = {
-                            scrolled = !scrolled
-                            send(
-                                JSONObject()
-                                    .put("type", "SetFlow")
-                                    .put("flow", if (scrolled) "scrolled" else "paginated"),
-                            )
-                        },
-                        enabled = bridge != null && readerReady,
-                    ) { Text(if (scrolled) "Paginated" else "Scrolled") }
-                    TextButton(onClick = onAddBook) { Text("Add EPUB") }
-                }
-            }
-            Text(
-                text = book.title.ifBlank { "Opening EPUB…" },
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+    LaunchedEffect(readerReady, scrolled) {
+        if (readerReady) {
+            send(
+                JSONObject()
+                    .put("type", "SetFlow")
+                    .put("flow", if (scrolled) "scrolled" else "paginated"),
             )
-            if (book.author.isNotBlank()) {
-                Text(book.author, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            if (error.isNotBlank()) {
-                Text(error, color = MaterialTheme.colorScheme.error, maxLines = 2)
-            }
         }
+    }
+    LaunchedEffect(readerReady, selectable) {
+        if (readerReady) {
+            send(JSONObject().put("type", "SetSelectable").put("enabled", selectable))
+        }
+    }
+
+    Box(modifier) {
         key(book.id) {
             ReaderView(
                 book = book,
@@ -362,8 +410,9 @@ private fun ReaderScreen(
                         readerReady = false
                     }
                 },
-                onBookReady = { title, author, identifier ->
+                onBookReady = { title, author, identifier, chapters ->
                     error = ""
+                    toc = chapters
                     persistenceScope.launch {
                         dao.updateMetadata(
                             id = book.id,
@@ -374,8 +423,10 @@ private fun ReaderScreen(
                         )
                     }
                 },
-                onRelocated = { cfi, fraction ->
+                onRelocated = { cfi, fraction, total ->
                     progress = fraction
+                    currentCfi = cfi
+                    if (total != null) pages = total
                     readerReady = true
                     persistenceScope.launch {
                         dao.updateProgress(
@@ -390,16 +441,304 @@ private fun ReaderScreen(
                     error = it
                     readerReady = false
                 },
-                modifier = Modifier.fillMaxWidth().weight(1f),
+                modifier = Modifier.fillMaxSize(),
             )
         }
-        ReaderControls(
-            progress = progress,
-            enabled = bridge != null && readerReady,
-            onPrevious = { sendCommand("Previous") },
-            onNext = { sendCommand("Next") },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+
+        // Centre tap target: everything else on the page stays reachable by the reader.
+        Box(
+            Modifier.align(Alignment.Center)
+                .size(120.dp)
+                .clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() },
+                ) { chromeVisible = !chromeVisible },
         )
+
+        if (showChapters) {
+            ChaptersScreen(
+                toc = toc,
+                onBack = { showChapters = false },
+                onOpen = { href ->
+                    showChapters = false
+                    send(JSONObject().put("type", "GoToHref").put("href", href))
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+            return@Box
+        }
+
+        if (showBookmarks) {
+            BookmarksDialog(
+                bookmarks = bookmarks,
+                onOpen = { cfi ->
+                    showBookmarks = false
+                    send(JSONObject().put("type", "GoToCfi").put("cfi", cfi))
+                },
+                onRemove = { cfi ->
+                    persistenceScope.launch {
+                        dao.updateBookmarks(book.id, JSONArray(bookmarks - cfi).toString())
+                    }
+                },
+                onDismiss = { showBookmarks = false },
+            )
+        }
+
+        if (chromeVisible) {
+            ReaderTopBar(
+                book = book,
+                error = error,
+                bookmarked = bookmarked,
+                onBack = onBack,
+                onToggleBookmark = {
+                    val cfi = currentCfi ?: return@ReaderTopBar
+                    val updated = if (bookmarked) bookmarks - cfi else bookmarks + cfi
+                    persistenceScope.launch {
+                        dao.updateBookmarks(book.id, JSONArray(updated).toString())
+                    }
+                },
+                onShowBookmarks = { showBookmarks = true },
+                modifier = Modifier.align(Alignment.TopCenter),
+            )
+            if (scrolled) {
+                ScrubHandle(
+                    progress = progress,
+                    pages = pages,
+                    enabled = bridge != null && readerReady,
+                    onSeek = {
+                        send(JSONObject().put("type", "GoToFraction").put("fraction", it))
+                    },
+                    modifier = Modifier.align(Alignment.CenterStart),
+                )
+            } else {
+                ReaderControls(
+                    progress = progress,
+                    enabled = bridge != null && readerReady,
+                    onPrevious = { sendCommand("Previous") },
+                    onNext = { sendCommand("Next") },
+                    onSeek = {
+                        send(JSONObject().put("type", "GoToFraction").put("fraction", it))
+                    },
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
+            }
+            Row(
+                Modifier.align(Alignment.BottomCenter)
+                    .padding(bottom = if (scrolled) 8.dp else 72.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TextButton(onClick = { showChapters = true }, enabled = toc.isNotEmpty()) {
+                    Text("Chapters")
+                }
+                TextButton(onClick = { selectable = !selectable }) {
+                    Text(if (selectable) "Reading" else "Annotate")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChaptersScreen(
+    toc: List<TocEntry>,
+    onBack: () -> Unit,
+    onOpen: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(modifier) {
+        Column {
+            Row(Modifier.padding(8.dp)) {
+                TextButton(onClick = onBack) { Text("‹ Back") }
+                Text(
+                    "Chapters",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(start = 8.dp, top = 8.dp),
+                )
+            }
+            LazyColumn(Modifier.fillMaxSize()) {
+                items(toc.size) { index ->
+                    val entry = toc[index]
+                    Text(
+                        text = entry.label,
+                        modifier = Modifier.fillMaxWidth()
+                            .clickable { onOpen(entry.href) }
+                            .padding(
+                                start = (16 + entry.depth * 16).dp,
+                                end = 16.dp,
+                                top = 12.dp,
+                                bottom = 12.dp,
+                            ),
+                    )
+                    HorizontalDivider()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BookmarksDialog(
+    bookmarks: List<String>,
+    onOpen: (String) -> Unit,
+    onRemove: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        title = { Text("Bookmarks") },
+        text = {
+            if (bookmarks.isEmpty()) {
+                Text("No saved pages yet. Tap the ribbon to save this one.")
+            } else {
+                LazyColumn {
+                    items(bookmarks.size) { index ->
+                        val cfi = bookmarks[index]
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = "Saved page ${index + 1}",
+                                modifier = Modifier.weight(1f)
+                                    .clickable { onOpen(cfi) }
+                                    .padding(vertical = 12.dp),
+                            )
+                            TextButton(onClick = { onRemove(cfi) }) { Text("Remove") }
+                        }
+                        HorizontalDivider()
+                    }
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun ReaderTopBar(
+    book: BookEntity,
+    error: String,
+    bookmarked: Boolean,
+    onBack: (() -> Unit)?,
+    onToggleBookmark: () -> Unit,
+    onShowBookmarks: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+            if (onBack != null) {
+                TextButton(onClick = onBack) { Text("‹", style = MaterialTheme.typography.headlineMedium) }
+            }
+            Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
+                Text(
+                    text = book.title.ifBlank { "Opening EPUB…" },
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (book.author.isNotBlank()) {
+                    Text(
+                        book.author,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (error.isNotBlank()) {
+                    Text(error, color = MaterialTheme.colorScheme.error, maxLines = 2)
+                }
+            }
+            Ribbon(
+                filled = bookmarked,
+                // Long press opens the saved pages instead of costing another icon.
+                modifier = Modifier
+                    .combinedClickable(
+                        onClick = onToggleBookmark,
+                        onLongClick = onShowBookmarks,
+                        onLongClickLabel = "Show saved pages",
+                    )
+                    .padding(horizontal = 12.dp)
+                    .size(width = 24.dp, height = 40.dp),
+            )
+        }
+    }
+}
+
+/** Bookmark ribbon: a rectangle with a notch cut out of the bottom edge. */
+@Composable
+private fun Ribbon(filled: Boolean, modifier: Modifier = Modifier) {
+    val color = MaterialTheme.colorScheme.primary
+    Canvas(modifier) {
+        val notch = size.height * 0.25f
+        val path = Path().apply {
+            moveTo(0f, 0f)
+            lineTo(size.width, 0f)
+            lineTo(size.width, size.height)
+            lineTo(size.width / 2f, size.height - notch)
+            lineTo(0f, size.height)
+            close()
+        }
+        drawPath(path, color, style = if (filled) Fill else Stroke(width = 4f))
+    }
+}
+
+@Composable
+private fun ScrubHandle(
+    progress: Double?,
+    pages: Int?,
+    enabled: Boolean,
+    onSeek: (Double) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var dragFraction by remember { mutableStateOf<Float?>(null) }
+    var trackHeight by remember { mutableStateOf(1f) }
+
+    Row(modifier.padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(
+            Modifier.height(120.dp)
+                .width(24.dp)
+                .onSizeChanged { trackHeight = it.height.toFloat().coerceAtLeast(1f) }
+                .pointerInput(enabled) {
+                    if (!enabled) return@pointerInput
+                    detectVerticalDragGestures(
+                        onDragStart = { offset ->
+                            dragFraction = (offset.y / trackHeight).coerceIn(0f, 1f)
+                        },
+                        onDragEnd = {
+                            dragFraction?.let { onSeek(it.toDouble()) }
+                            dragFraction = null
+                        },
+                        onDragCancel = { dragFraction = null },
+                    ) { change, _ ->
+                        dragFraction = (change.position.y / trackHeight).coerceIn(0f, 1f)
+                    }
+                },
+            verticalArrangement = Arrangement.SpaceEvenly,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            repeat(3) {
+                Box(
+                    Modifier.size(6.dp)
+                        .background(MaterialTheme.colorScheme.outline, CircleShape),
+                )
+            }
+        }
+        val shown = dragFraction?.toDouble() ?: progress
+        if (dragFraction != null) {
+            Surface(
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                shape = CircleShape,
+            ) {
+                Text(
+                    text = pages?.let { "${(shown!! * it).toInt() + 1} / $it" }
+                        ?: shown.asPercent(),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+            }
+        }
     }
 }
 
@@ -409,14 +748,54 @@ private fun ReaderControls(
     enabled: Boolean,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
+    onSeek: (Double) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(modifier, horizontalArrangement = Arrangement.SpaceBetween) {
-        Button(onClick = onPrevious, enabled = enabled) { Text("Previous") }
-        Text(progress.asPercent(), modifier = Modifier.padding(top = 12.dp))
-        Button(onClick = onNext, enabled = enabled) { Text("Next") }
+    var dragged by remember { mutableStateOf<Float?>(null) }
+    Surface(
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(onClick = onPrevious, enabled = enabled) { Text("‹") }
+            Slider(
+                value = dragged ?: progress?.toFloat()?.coerceIn(0f, 1f) ?: 0f,
+                onValueChange = { dragged = it },
+                onValueChangeFinished = {
+                    dragged?.let { onSeek(it.toDouble()) }
+                    dragged = null
+                },
+                enabled = enabled,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onNext, enabled = enabled) { Text("›") }
+        }
     }
 }
+
+private data class TocEntry(val label: String, val href: String, val depth: Int)
+
+private fun JSONArray?.toTocEntries(): List<TocEntry> {
+    val array = this ?: return emptyList()
+    return (0 until array.length()).mapNotNull { index ->
+        val item = array.optJSONObject(index) ?: return@mapNotNull null
+        val href = item.optString("href").take(2048).takeIf(String::isNotBlank)
+            ?: return@mapNotNull null
+        TocEntry(
+            label = item.optString("label").normalizedText().ifBlank { "Untitled" },
+            href = href,
+            depth = item.optInt("depth", 0).coerceIn(0, 5),
+        )
+    }
+}
+
+private fun String?.toCfiList(): List<String> = runCatching {
+    val array = JSONArray(this ?: "[]")
+    (0 until array.length()).mapNotNull { array.optString(it).takeIf(String::isNotBlank) }
+}.getOrDefault(emptyList())
 
 @Composable
 @SuppressLint("SetJavaScriptEnabled")
@@ -424,8 +803,8 @@ private fun ReaderView(
     book: BookEntity,
     onBridgeReady: (JavaScriptReplyProxy) -> Unit,
     onBridgeClosed: (JavaScriptReplyProxy?) -> Unit,
-    onBookReady: (String, String, String) -> Unit,
-    onRelocated: (String, Double?) -> Unit,
+    onBookReady: (String, String, String, List<TocEntry>) -> Unit,
+    onRelocated: (String, Double?, Int?) -> Unit,
     onReaderError: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -483,6 +862,7 @@ private fun ReaderView(
                             data.optString("title").normalizedText(),
                             data.optString("author").normalizedText(),
                             data.optString("identifier").normalizedText(),
+                            data.optJSONArray("toc").toTocEntries(),
                         )
                         "Relocated" -> {
                             val cfi = data.optString("cfi")
@@ -491,6 +871,7 @@ private fun ReaderView(
                                     cfi,
                                     data.optDouble("fraction", Double.NaN)
                                         .takeIf(Double::isFinite),
+                                    data.optInt("pages", 0).takeIf { it > 0 },
                                 )
                             }
                         }
