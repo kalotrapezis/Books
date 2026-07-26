@@ -15,6 +15,8 @@ try {
         const book = await makeBook('/book/selected.epub')
         document.body.dataset.readerStage = 'book-parsed'
         secureBookContent(book)
+        const { cfi: lastLocation } = await fetch('/state/last-location.json')
+            .then(response => response.json())
 
         const view = document.createElement('foliate-view')
         document.body.append(view)
@@ -26,16 +28,36 @@ try {
                 ? `${Math.round(detail.fraction * 100)}%`
                 : 'Reading'
             status.textContent = detail.cfi ? `${percent} · CFI ready` : percent
+            if (detail.cfi) globalThis.booksBridge?.postMessage(JSON.stringify({
+                type: 'Relocated',
+                cfi: detail.cfi,
+            }))
         })
-        requestAnimationFrame(() => {
-            Promise.resolve(view.renderer.next())
-                .then(() => view.renderer.render())
-                .catch(error => {
-                    document.body.dataset.readerStage = 'failed'
-                    status.textContent = `Reader check failed: ${error.message}`
-                })
+        document.body.dataset.readerStage = 'waiting-for-layout'
+        const layoutObserver = new ResizeObserver(() => {
+            if (view.renderer.getBoundingClientRect().height <= 0) return
+            layoutObserver.disconnect()
+            document.body.dataset.readerStage = 'starting'
+            let attempts = 0
+            const contentTimer = setInterval(() => {
+                if (view.renderer.getContents().length) {
+                    clearInterval(contentTimer)
+                    try {
+                        view.renderer.render()
+                    } catch (error) {
+                        showReaderError(error)
+                    }
+                } else if (++attempts >= 200) {
+                    clearInterval(contentTimer)
+                    showReaderError(new Error('Reader section did not load'))
+                }
+            }, 25)
+            Promise.resolve(lastLocation
+                ? view.init({ lastLocation })
+                : view.renderer.firstSection())
+                .catch(showReaderError)
         })
-        document.body.dataset.readerStage = 'initialized'
+        layoutObserver.observe(view.renderer)
         status.textContent = ''
     }
 } catch (error) {
@@ -55,6 +77,11 @@ function secureBookContent(book) {
         event.detail.data = Promise.resolve(event.detail.data)
             .then(data => sanitizeDocument(data, event.detail.type))
     })
+}
+
+function showReaderError(error) {
+    document.body.dataset.readerStage = 'failed'
+    status.textContent = `Reader check failed: ${error.message}`
 }
 
 function sanitizeDocument(source, type) {

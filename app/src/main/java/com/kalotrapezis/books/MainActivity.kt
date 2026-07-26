@@ -1,6 +1,7 @@
 package com.kalotrapezis.books
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
@@ -33,11 +34,16 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.WebViewAssetLoader
+import androidx.webkit.WebViewCompat
 import java.io.ByteArrayInputStream
+import org.json.JSONObject
 
 private const val READER_ORIGIN = "appassets.androidplatform.net"
-private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=8"
+private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=16"
 private const val EPUB_MIME_TYPE = "application/epub+zip"
+private const val PREFERENCES_NAME = "reader-state"
+private const val BOOK_URI_KEY = "book-uri"
+private const val LAST_CFI_KEY = "last-cfi"
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -51,7 +57,12 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun BooksApp() {
     val context = LocalContext.current
-    var bookUri by remember { mutableStateOf<Uri?>(null) }
+    val preferences = remember {
+        context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+    }
+    var bookUri by remember {
+        mutableStateOf(preferences.getString(BOOK_URI_KEY, null)?.let(Uri::parse))
+    }
     val openBook = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             runCatching {
@@ -60,6 +71,10 @@ private fun BooksApp() {
                     Intent.FLAG_GRANT_READ_URI_PERMISSION,
                 )
             }
+            preferences.edit()
+                .putString(BOOK_URI_KEY, uri.toString())
+                .remove(LAST_CFI_KEY)
+                .apply()
             bookUri = uri
         }
     }
@@ -106,8 +121,18 @@ private fun ReaderView(
     AndroidView(
         modifier = modifier,
         factory = { context ->
+            val preferences =
+                context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
             val assetLoaderBuilder = WebViewAssetLoader.Builder()
                 .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(context))
+                .addPathHandler("/state/") { path ->
+                    if (path != "last-location.json") {
+                        blockedResponse()
+                    } else {
+                        val cfi = preferences.getString(LAST_CFI_KEY, null)
+                        jsonResponse(JSONObject().put("cfi", cfi).toString())
+                    }
+                }
             if (bookUri != null) {
                 assetLoaderBuilder.addPathHandler("/book/") { path ->
                     if (path != "selected.epub") {
@@ -136,6 +161,24 @@ private fun ReaderView(
                 settings.setSupportMultipleWindows(false)
                 settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                 webViewClient = LocalReaderClient(assetLoader)
+                WebViewCompat.addWebMessageListener(
+                    this,
+                    "booksBridge",
+                    setOf("https://$READER_ORIGIN"),
+                ) { _, message, sourceOrigin, isMainFrame, _ ->
+                    if (!isMainFrame || sourceOrigin.host != READER_ORIGIN) return@addWebMessageListener
+                    val messageData = message.data ?: return@addWebMessageListener
+                    val data =
+                        runCatching { JSONObject(messageData) }.getOrNull()
+                            ?: return@addWebMessageListener
+                    val cfi = data.optString("cfi")
+                    if (data.optString("type") == "Relocated"
+                        && cfi.startsWith("epubcfi(")
+                        && cfi.length <= 8192
+                    ) {
+                        preferences.edit().putString(LAST_CFI_KEY, cfi).apply()
+                    }
+                }
                 loadUrl(if (bookUri == null) READER_URL else "$READER_URL&book=selected")
             }
         },
@@ -174,4 +217,10 @@ private fun blockedResponse() = WebResourceResponse(
     "text/plain",
     "UTF-8",
     ByteArrayInputStream(ByteArray(0)),
+)
+
+private fun jsonResponse(json: String) = WebResourceResponse(
+    "application/json",
+    "UTF-8",
+    ByteArrayInputStream(json.toByteArray()),
 )
