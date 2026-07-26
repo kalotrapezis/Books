@@ -73,7 +73,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 private const val READER_ORIGIN = "appassets.androidplatform.net"
-private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=18"
+private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=19"
 private const val EPUB_MIME_TYPE = "application/epub+zip"
 private const val PREFERENCES_NAME = "reader-state"
 private const val BOOK_URI_KEY = "book-uri"
@@ -306,10 +306,12 @@ private fun ReaderScreen(
     var error by remember(book.id) { mutableStateOf("") }
     var bridge by remember(book.id) { mutableStateOf<JavaScriptReplyProxy?>(null) }
     var readerReady by remember(book.id) { mutableStateOf(false) }
-    val sendCommand: (String) -> Unit = { type ->
-        runCatching { bridge?.postMessage(JSONObject().put("type", type).toString()) }
+    var scrolled by remember(book.id) { mutableStateOf(false) }
+    val send: (JSONObject) -> Unit = { command ->
+        runCatching { bridge?.postMessage(command.toString()) }
             .onFailure { error = "Reader command failed: ${it.message ?: "unknown error"}" }
     }
+    val sendCommand: (String) -> Unit = { type -> send(JSONObject().put("type", type)) }
 
     Column(modifier) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
@@ -322,7 +324,20 @@ private fun ReaderScreen(
                 } else {
                     Text("Books", style = MaterialTheme.typography.titleLarge)
                 }
-                TextButton(onClick = onAddBook) { Text("Add EPUB") }
+                Row {
+                    TextButton(
+                        onClick = {
+                            scrolled = !scrolled
+                            send(
+                                JSONObject()
+                                    .put("type", "SetFlow")
+                                    .put("flow", if (scrolled) "scrolled" else "paginated"),
+                            )
+                        },
+                        enabled = bridge != null && readerReady,
+                    ) { Text(if (scrolled) "Paginated" else "Scrolled") }
+                    TextButton(onClick = onAddBook) { Text("Add EPUB") }
+                }
             }
             Text(
                 text = book.title.ifBlank { "Opening EPUB…" },

@@ -87,8 +87,14 @@ try {
             } catch {
                 return
             }
-            if (!command || typeof command !== 'object'
-                || Object.keys(command).length !== 1
+            if (!command || typeof command !== 'object') return
+            if (command.type === 'SetFlow'
+                && Object.keys(command).length === 2
+                && ['paginated', 'scrolled'].includes(command.flow)) {
+                view.renderer.setAttribute('flow', command.flow)
+                return
+            }
+            if (Object.keys(command).length !== 1
                 || !['Previous', 'Next'].includes(command.type)) return
             commandQueue = commandQueue.then(
                 () => navigate(view, command.type),
