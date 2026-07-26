@@ -101,6 +101,7 @@ private const val EPUB_MIME_TYPE = "application/epub+zip"
 private const val PREFERENCES_NAME = "reader-state"
 private const val BOOK_URI_KEY = "book-uri"
 private const val LAST_CFI_KEY = "last-cfi"
+private const val SCROLLED_KEY = "scrolled"
 private val LOCAL_SCHEMES = setOf("blob", "data")
 
 class MainActivity : ComponentActivity() {
@@ -121,7 +122,14 @@ private fun BooksApp() {
     var initialized by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     val coverAttempts = remember { mutableSetOf<String>() }
-    var scrolled by remember { mutableStateOf(false) }
+    val preferences = remember {
+        context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+    }
+    var scrolled by remember { mutableStateOf(preferences.getBoolean(SCROLLED_KEY, false)) }
+    val setScrolled: (Boolean) -> Unit = {
+        scrolled = it
+        preferences.edit().putBoolean(SCROLLED_KEY, it).apply()
+    }
 
     LaunchedEffect(dao) {
         migrateLegacyBook(context, dao)?.let { error = it }
@@ -187,7 +195,7 @@ private fun BooksApp() {
                             selectedBookId = selectedBookId,
                             error = error,
                             scrolled = scrolled,
-                            onSetScrolled = { scrolled = it },
+                            onSetScrolled = setScrolled,
                             onAddBook = launchPicker,
                             onSelectBook = selectBook,
                             modifier = Modifier.width(280.dp).fillMaxHeight(),
@@ -211,7 +219,7 @@ private fun BooksApp() {
                         selectedBookId = null,
                         error = error,
                         scrolled = scrolled,
-                        onSetScrolled = { scrolled = it },
+                        onSetScrolled = setScrolled,
                         onAddBook = launchPicker,
                         onSelectBook = selectBook,
                         modifier = Modifier.fillMaxSize(),
@@ -446,7 +454,11 @@ private fun ReaderScreen(
                     error = it
                     readerReady = false
                 },
-                modifier = Modifier.fillMaxSize(),
+                // Inset the page so the overlay chrome never sits on top of the text.
+                modifier = Modifier.fillMaxSize().padding(
+                    top = if (chromeVisible) 64.dp else 0.dp,
+                    bottom = if (!chromeVisible) 0.dp else if (scrolled) 48.dp else 104.dp,
+                ),
             )
         }
 

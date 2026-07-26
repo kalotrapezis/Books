@@ -230,6 +230,18 @@ random-access loader.
   μικρογραφία JPEG (μέγιστη πλευρά 512 px) σε app-private αρχείο και η Room
   κρατά μόνο το path (`coverPath`, migration 1→2). Δεν περνά τίποτα από το
   WebView ούτε αποθηκεύεται blob. Εκκρεμεί επαλήθευση σε συσκευή.
+- Διορθώθηκε σοβαρό σφάλμα του reader shell: ο `WebViewClient` έκοβε τα `blob:`
+  URL που δημιουργεί το ίδιο το `foliate-js` για κάθε ενότητα, οπότε το iframe
+  φόρτωνε κενό έγγραφο και δεν εμφανιζόταν ποτέ κείμενο βιβλίου, παρότι CFI,
+  ποσοστό και TOC δούλευαν. Πλέον επιτρέπονται μόνο `blob:`/`data:`, χωρίς άδεια
+  Internet.
+- Reader chrome κατά το σκίτσο: overlay top bar με back, τίτλο/συγγραφέα και
+  bookmark ribbon (tap αποθηκεύει το τρέχον CFI, long press ανοίγει τη λίστα),
+  tap στο κέντρο κρύβει/δείχνει το UI, Chapters view από το TOC, Annotate
+  toggle που κρατά την επιλογή κειμένου κλειστή όσο διαβάζεις.
+- Paginated: κάτω μπάρα με seek slider. Scrolled: τρεις τελείες αριστερά με
+  bubble σελίδας και προσγείωση στο release. Η ρύθμιση flow αποθηκεύεται.
+- Bookmarks: Foliate-συμβατό JSON array CFI ανά βιβλίο (migration 2→3).
 - Επιβεβαιώθηκαν σε Android 16 συσκευή η compact phone διάταξη, η side-panel
   διάταξη σε landscape/tablet πλάτος, η βιβλιοθήκη δύο πραγματικών EPUB, η
   ανεξάρτητη επαναφορά θέσης ανά βιβλίο, η αμφίδρομη πλοήγηση και η ακριβής
