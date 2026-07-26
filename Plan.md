@@ -186,6 +186,16 @@ Gate: αν το WebView δεν υποστηρίζει αξιόπιστα το en
 file/native bridge, σταματά η κύρια υλοποίηση και αξιολογείται custom
 random-access loader.
 
+Τρέχουσα πρόοδος:
+
+- Ολοκληρώθηκαν το buildable project, το pin του `foliate-js`, το ασφαλές
+  offline origin, το CFI capability check και η επιλογή EPUB μέσω Android.
+- Επιβεβαιώθηκε σε τοπικό browser harness ότι πραγματικά EPUB αναλύονται και
+  φτάνουν στο ανοιγμένο `foliate-view`.
+- Εκκρεμούν σε πραγματική Android συσκευή ή emulator η οπτική απόδοση,
+  `Relocated`, αποθήκευση/επαναφορά CFI και οι μετρήσεις μνήμης. Αυτά παραμένουν
+  το gate πριν αρχίσει η Φάση 1.
+
 ### Φάση 1 — Πλήρες EPUB vertical slice
 
 - Room library: τίτλος, συγγραφέας, εξώφυλλο, URI, identifiers.

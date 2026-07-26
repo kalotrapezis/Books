@@ -4,17 +4,20 @@
   <meta charset="utf-8">
   <meta
     http-equiv="Content-Security-Policy"
-    content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+    content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data: blob:; connect-src 'self'; object-src 'none'; frame-src blob: data:; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Books reader capability check</title>
   <style>
     :root { color-scheme: light dark; font-family: sans-serif; }
-    body { margin: 0; padding: 1rem; }
+    html, body { height: 100%; }
+    body { margin: 0; overflow: hidden; }
     #status { font-weight: 600; }
+    #status:not(:empty) { padding: 1rem; }
+    foliate-view { display: block; width: 100%; height: 100%; }
   </style>
 </head>
 <body>
   <p id="status">Checking bundled foliate-js…</p>
-  <script type="module" src="./check.js"></script>
+  <script type="module" src="./check.js?v=4"></script>
 </body>
 </html>
