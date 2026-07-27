@@ -5,6 +5,9 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.view.ActionMode
+import android.view.Menu
+import android.view.MenuItem
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -1394,17 +1397,16 @@ private fun ReaderView(
                 }
                 .build()
 
-            // The system "Copy / Share" bar would compete with our own selection
-            // panel, so the WebView never starts an action mode.
+            // Keep the selection handles, drop the system Copy/Share items: the
+            // action mode still runs, it just gets an empty menu.
             object : WebView(context) {
-                override fun startActionMode(
-                    callback: android.view.ActionMode.Callback?,
-                ): android.view.ActionMode? = null
+                override fun startActionMode(callback: ActionMode.Callback?): ActionMode? =
+                    super.startActionMode(EmptyMenu(callback))
 
                 override fun startActionMode(
-                    callback: android.view.ActionMode.Callback?,
+                    callback: ActionMode.Callback?,
                     type: Int,
-                ): android.view.ActionMode? = null
+                ): ActionMode? = super.startActionMode(EmptyMenu(callback), type)
             }.apply {
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 isVerticalScrollBarEnabled = false
@@ -1569,6 +1571,27 @@ private class LocalReaderClient(
         onBridgeClosed(view.tag as? JavaScriptReplyProxy)
         view.destroy()
         return true
+    }
+}
+
+/** Passes the selection action mode through with no menu items of its own. */
+private class EmptyMenu(private val inner: ActionMode.Callback?) : ActionMode.Callback {
+    override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+        inner?.onCreateActionMode(mode, menu)
+        menu.clear()
+        return true
+    }
+
+    override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean {
+        inner?.onPrepareActionMode(mode, menu)
+        menu.clear()
+        return true
+    }
+
+    override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean = false
+
+    override fun onDestroyActionMode(mode: ActionMode) {
+        inner?.onDestroyActionMode(mode)
     }
 }
 
