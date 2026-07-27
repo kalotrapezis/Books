@@ -1312,10 +1312,15 @@ private fun AnnotationsScreen(
     }
 }
 
-/** Foliate names its exports “Annotations for “Title””; keep that, it reads well. */
+/** `Title-Books-Export-2026-07-27-1215.json`: sorts by book, then by when. */
 private fun foliateFileName(book: BookEntity): String {
-    val title = book.title.ifBlank { "book" }.replace(Regex("[/\\\\:*?\"<>|]"), "").take(80)
-    return "Annotations for \u201C$title\u201D.json"
+    val title = book.title.ifBlank { "book" }
+        .replace(Regex("[/\\\\:*?\"<>|]"), "")
+        .trim()
+        .take(60)
+    val stamp = java.text.SimpleDateFormat("yyyy-MM-dd-HHmm", java.util.Locale.US)
+        .format(java.util.Date())
+    return "$title-Books-Export-$stamp.json"
 }
 
 private fun removeAnnotation(existing: List<JSONObject>, cfi: String): JSONArray =
