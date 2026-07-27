@@ -104,7 +104,6 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.documentfile.provider.DocumentFile
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
@@ -137,7 +136,7 @@ private const val FONT_SCALE_KEY = "font-scale"
 private const val LINE_HEIGHT_KEY = "line-height"
 private const val MARGIN_KEY = "margin"
 private const val FONT_KEY = "font"
-private const val SYNC_FOLDER_KEY = "sync-folder"
+private const val SYNC_FILE_PREFIX = "sync-file-"
 
 /** Reader typography, shared by every book. */
 private data class Typography(
@@ -618,65 +617,7 @@ private fun ReaderScreen(
     val preferences = remember(readerContext) {
         readerContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     }
-    // Merge the book's file inside a synced folder (Syncthing, Nextcloud, …) both ways.
-    val syncWithFolder: (Uri) -> Unit = { tree ->
-        persistenceScope.launch {
-            transferNotice = runCatching {
-                withContext(Dispatchers.IO) {
-                    val folder = DocumentFile.fromTreeUri(readerContext, tree)
-                        ?: error("Folder unavailable")
-                    val name = foliateFileName(book)
-                    val file = folder.findFile(name)
-                    val merged = file?.let {
-                        readerContext.contentResolver.openInputStream(it.uri)
-                            ?.use { stream -> stream.readBytes().decodeToString() }
-                            ?.let { text -> FoliateJson.merge(book, text) }
-                    }
-                    if (merged != null) {
-                        dao.applyImport(
-                            book.id,
-                            merged.annotations,
-                            merged.bookmarks,
-                            merged.extras,
-                        )
-                    }
-                    val target = file ?: folder.createFile("application/json", name)
-                        ?: error("Could not create the file")
-                    val updated = dao.findByUri(book.uri) ?: book
-                    readerContext.contentResolver.openOutputStream(target.uri, "wt")?.use { out ->
-                        out.write(
-                            FoliateJson.export(updated, updated.foliateExtras, page, pages)
-                                .toByteArray(),
-                        )
-                    } ?: error("Could not write the file")
-                    merged
-                }?.let { merged ->
-                    merged.annotations.toAnnotations().forEach {
-                        send(
-                            JSONObject().put("type", "Annotate")
-                                .put("cfi", it.optString("value"))
-                                .put("color", it.optString("color").ifBlank { "yellow" }),
-                        )
-                    }
-                    if (merged.identifierMatches) "Synced with the folder."
-                    else "Synced, but the file is from a different book identifier."
-                } ?: "Wrote this book's file to the folder."
-            }.getOrElse { "Sync failed: ${it.message ?: "unknown error"}" }
-        }
-    }
-    val pickSyncFolder = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocumentTree(),
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        runCatching {
-            readerContext.contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-            )
-        }
-        preferences.edit().putString(SYNC_FOLDER_KEY, uri.toString()).apply()
-        syncWithFolder(uri)
-    }
+    var pendingImport by remember(book.id) { mutableStateOf<FoliateJson.Merged?>(null) }
     val exportFile = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
     ) { uri ->
@@ -694,7 +635,53 @@ private fun ReaderScreen(
             }.getOrElse { "Export failed: ${it.message ?: "unknown error"}" }
         }
     }
-    var pendingImport by remember(book.id) { mutableStateOf<FoliateJson.Merged?>(null) }
+    // Sync against one file the user picks per book: Syncthing folders hold files
+    // with their own names, so matching by folder + key was too fragile.
+    val syncKey = "$SYNC_FILE_PREFIX${book.id}"
+    var syncUri by remember(book.id) {
+        mutableStateOf(preferences.getString(syncKey, null)?.let(Uri::parse))
+    }
+    val syncWithFile: (Uri) -> Unit = { target ->
+        persistenceScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val text = readerContext.contentResolver.openInputStream(target)
+                        ?.use { it.readBytes().decodeToString() }
+                        ?: error("Could not read the file")
+                    FoliateJson.merge(book, text)
+                }
+            }.onSuccess { pendingImport = it }
+                .onFailure { transferNotice = "Sync failed: ${it.message ?: "unknown error"}" }
+        }
+    }
+    val writeSyncFile: (Uri) -> Unit = { target ->
+        persistenceScope.launch {
+            transferNotice = runCatching {
+                withContext(Dispatchers.IO) {
+                    val updated = dao.findByUri(book.uri) ?: book
+                    readerContext.contentResolver.openOutputStream(target, "wt")?.use { out ->
+                        out.write(
+                            FoliateJson.export(updated, updated.foliateExtras, page, pages)
+                                .toByteArray(),
+                        )
+                    } ?: error("Could not write the file")
+                }
+                "Wrote this book's annotations to the synced file."
+            }.getOrElse { "Sync write failed: ${it.message ?: "unknown error"}" }
+        }
+    }
+    val pickSyncFile = rememberLauncherForActivityResult(OpenReadWriteDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching {
+            readerContext.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+        }
+        preferences.edit().putString(syncKey, uri.toString()).apply()
+        syncUri = uri
+        syncWithFile(uri)
+    }
     val applyMerge: (FoliateJson.Merged) -> Unit = { merged ->
         persistenceScope.launch {
             dao.applyImport(book.id, merged.annotations, merged.bookmarks, merged.extras)
@@ -707,6 +694,7 @@ private fun ReaderScreen(
             }
             transferNotice = if (merged.identifierMatches) "Imported Foliate data."
             else "Imported, but this file is from a different book identifier."
+            syncUri?.let(writeSyncFile)
         }
     }
     val importFile = rememberLauncherForActivityResult(
@@ -846,6 +834,17 @@ private fun ReaderScreen(
             return@Box
         }
 
+        pendingImport?.let { merged ->
+            ImportPreviewDialog(
+                merged = merged,
+                onImport = {
+                    applyMerge(merged)
+                    pendingImport = null
+                },
+                onCancel = { pendingImport = null },
+            )
+        }
+
         if (showAnnotations) {
             AnnotationsScreen(
                 annotations = annotations,
@@ -853,14 +852,15 @@ private fun ReaderScreen(
                 onExport = { exportFile.launch(foliateFileName(book)) },
                 onImport = { importFile.launch(arrayOf("application/json", "text/plain", "*/*")) },
                 onSync = {
-                    val folder = preferences.getString(SYNC_FOLDER_KEY, null)
-                    if (folder == null) pickSyncFolder.launch(null) else syncWithFolder(Uri.parse(folder))
+                    val target = syncUri
+                    if (target == null) {
+                        pickSyncFile.launch(arrayOf("application/json", "text/plain", "*/*"))
+                    } else {
+                        syncWithFile(target)
+                    }
                 },
-                syncLabel = if (preferences.getString(SYNC_FOLDER_KEY, null) == null) {
-                    "Choose sync folder"
-                } else {
-                    "Sync now"
-                },
+                onSyncWrite = { syncUri?.let(writeSyncFile) },
+                syncLabel = if (syncUri == null) "Choose sync file" else "Sync now",
                 notice = transferNotice,
                 onOpen = { cfi ->
                     showAnnotations = false
@@ -875,17 +875,6 @@ private fun ReaderScreen(
                 modifier = Modifier.fillMaxSize(),
             )
             return@Box
-        }
-
-        pendingImport?.let { merged ->
-            ImportPreviewDialog(
-                merged = merged,
-                onImport = {
-                    applyMerge(merged)
-                    pendingImport = null
-                },
-                onCancel = { pendingImport = null },
-            )
         }
 
         if (showBookmarks) {
@@ -1179,6 +1168,7 @@ private fun AnnotationsScreen(
     onExport: () -> Unit,
     onImport: () -> Unit,
     onSync: () -> Unit,
+    onSyncWrite: () -> Unit,
     syncLabel: String,
     notice: String,
     onOpen: (String) -> Unit,
@@ -1189,6 +1179,7 @@ private fun AnnotationsScreen(
         Column {
             ScreenHeader("Annotations", onBack) {
                 PillButton(syncLabel, onSync)
+                if (syncLabel == "Sync now") PillButton("Write", onSyncWrite)
                 PillButton("Import", onImport)
                 PillButton("Export", onExport)
             }
@@ -1880,6 +1871,16 @@ private class EmptyMenu(private val inner: ActionMode.Callback?) : ActionMode.Ca
     override fun onDestroyActionMode(mode: ActionMode) {
         inner?.onDestroyActionMode(mode)
     }
+}
+
+/** ACTION_OPEN_DOCUMENT that also asks for write access, so sync can save back. */
+private class OpenReadWriteDocument : ActivityResultContracts.OpenDocument() {
+    override fun createIntent(context: Context, input: Array<String>): Intent =
+        super.createIntent(context, input).addFlags(
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+        )
 }
 
 private fun blockedResponse() = WebResourceResponse(
