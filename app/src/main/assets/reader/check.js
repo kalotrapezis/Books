@@ -51,9 +51,6 @@ try {
         await view.open(book)
         // foliate slides the columns over 300 ms when this attribute is present.
         view.renderer.setAttribute('animated', '')
-        view.renderer.setAttribute('gap', '7%')
-        view.renderer.setAttribute('max-inline-size', '40em')
-        view.renderer.setAttribute('max-column-count', '2')
         setSelectable(true)
         // Draw saved highlights with foliate's own overlayer.
         view.addEventListener('draw-annotation', ({ detail }) => {

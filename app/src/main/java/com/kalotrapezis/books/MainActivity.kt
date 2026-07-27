@@ -126,7 +126,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 private const val READER_ORIGIN = "appassets.androidplatform.net"
-private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=38"
+private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=39"
 private const val EPUB_MIME_TYPE = "application/epub+zip"
 private const val PREFERENCES_NAME = "reader-state"
 private const val BOOK_URI_KEY = "book-uri"
@@ -143,7 +143,7 @@ private const val SYNC_FOLDER_KEY = "sync-folder"
 private data class Typography(
     val fontScale: Int = 100,
     val lineHeight: Float = 1.5f,
-    val margin: Int = 0,
+    val margin: Int = 48,
     val font: String = "book",
 ) {
     fun toJson(): JSONObject = JSONObject()
@@ -235,7 +235,7 @@ private fun BooksApp() {
             Typography(
                 fontScale = preferences.getInt(FONT_SCALE_KEY, 100),
                 lineHeight = preferences.getFloat(LINE_HEIGHT_KEY, 1.5f),
-                margin = preferences.getInt(MARGIN_KEY, 0),
+                margin = preferences.getInt(MARGIN_KEY, 48),
                 font = preferences.getString(FONT_KEY, "book") ?: "book",
             )
         )
@@ -1327,26 +1327,41 @@ private fun ScrubHandle(
 ) {
     var dragFraction by remember { mutableStateOf<Float?>(null) }
     var trackHeight by remember { mutableStateOf(1f) }
+    val haptics = LocalHapticFeedback.current
+    var lastTickedPage by remember { mutableStateOf<Int?>(null) }
+    // Same feel as the paginated seek bar: a third of finger speed, one tick per page.
+    val scrub: (Float) -> Unit = { target ->
+        val current = dragFraction ?: progress?.toFloat() ?: 0f
+        val next = (current + (target - current) * 0.33f).coerceIn(0f, 1f)
+        dragFraction = next
+        if (pages != null && pages > 0) {
+            val tick = (next * pages).toInt()
+            if (tick != lastTickedPage) {
+                lastTickedPage = tick
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            }
+        }
+    }
 
     Row(modifier.padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(
-            Modifier.height(120.dp)
-                .width(24.dp)
+            Modifier.height(180.dp)
+                .width(36.dp)
                 .onSizeChanged { trackHeight = it.height.toFloat().coerceAtLeast(1f) }
                 .pointerInput(enabled) {
                     if (!enabled) return@pointerInput
                     detectVerticalDragGestures(
-                        onDragStart = { offset ->
-                            dragFraction = (offset.y / trackHeight).coerceIn(0f, 1f)
-                        },
+                        onDragStart = { offset -> scrub(offset.y / trackHeight) },
                         onDragEnd = {
                             dragFraction?.let { onSeek(it.toDouble()) }
                             dragFraction = null
+                            lastTickedPage = null
                         },
-                        onDragCancel = { dragFraction = null },
-                    ) { change, _ ->
-                        dragFraction = (change.position.y / trackHeight).coerceIn(0f, 1f)
-                    }
+                        onDragCancel = {
+                            dragFraction = null
+                            lastTickedPage = null
+                        },
+                    ) { change, _ -> scrub(change.position.y / trackHeight) }
                 },
             verticalArrangement = Arrangement.SpaceEvenly,
             horizontalAlignment = Alignment.CenterHorizontally,
