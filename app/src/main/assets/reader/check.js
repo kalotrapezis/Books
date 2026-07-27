@@ -99,7 +99,16 @@ try {
                 const range = selection.getRangeAt(0)
                 const cfi = view.getCFI(detail.index, range)
                 if (!validCfi(cfi)) return
-                send({ type: 'Selected', cfi, text: text(selection.toString()) })
+                // Roughly where on the page the selection sits, so the native panel
+                // can dock on the opposite side and never cover it.
+                const rect = range.getBoundingClientRect()
+                const height = doc.documentElement.clientHeight || 1
+                send({
+                    type: 'Selected',
+                    cfi,
+                    text: text(selection.toString()),
+                    lower: (rect.top + rect.height / 2) / height > 0.5,
+                })
             })
             doc.addEventListener('click', event => {
                 if (swiped) {

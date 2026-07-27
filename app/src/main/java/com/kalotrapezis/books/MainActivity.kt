@@ -594,6 +594,7 @@ private fun ReaderScreen(
     var showChapters by remember(book.id) { mutableStateOf(false) }
     var showBookmarks by remember(book.id) { mutableStateOf(false) }
     var showAnnotations by remember(book.id) { mutableStateOf(false) }
+    var selectionLower by remember(book.id) { mutableStateOf(true) }
     var selection by remember(book.id) { mutableStateOf<Pair<String, String>?>(null) }
     val annotations = remember(book.annotations) { book.annotations.toAnnotations() }
     val clipboard = LocalClipboardManager.current
@@ -700,7 +701,10 @@ private fun ReaderScreen(
                     chromeVisible = !chromeVisible
                     selection = null
                 },
-                onSelected = { cfi, selectedText -> selection = cfi to selectedText },
+                onSelected = { cfi, selectedText, lower ->
+                    selection = cfi to selectedText
+                    selectionLower = lower
+                },
                 onTapPage = { forward -> sendCommand(if (forward) "Next" else "Previous") },
                 // No inset: the chrome floats over the page, so the text never reflows
                 // when it appears.
@@ -778,15 +782,13 @@ private fun ReaderScreen(
                 onShowBookmarks = { showBookmarks = true },
             )
         }
-        AnimatedVisibility(
-            visible = chromeVisible,
-            enter = fadeIn() + slideInVertically { it },
-            exit = fadeOut() + slideOutVertically { it },
-            modifier = Modifier.align(Alignment.BottomCenter),
-        ) {
-          Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            val current = selection
-            if (current != null) {
+        val current = selection
+        if (current != null) {
+            Box(
+                Modifier.align(
+                    if (selectionLower) Alignment.TopCenter else Alignment.BottomCenter,
+                ).padding(vertical = 72.dp),
+            ) {
                 SelectionPanel(
                     excerpt = current.second,
                     note = annotations.noteFor(current.first),
@@ -820,6 +822,15 @@ private fun ReaderScreen(
                     },
                 )
             }
+        }
+
+        AnimatedVisibility(
+            visible = chromeVisible && selection == null,
+            enter = fadeIn() + slideInVertically { it },
+            exit = fadeOut() + slideOutVertically { it },
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
+          Column(horizontalAlignment = Alignment.CenterHorizontally) {
             ChromeIsland {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(onClick = { showChapters = true }, enabled = toc.isNotEmpty()) {
@@ -1351,7 +1362,7 @@ private fun ReaderView(
     onBridgeClosed: (JavaScriptReplyProxy?) -> Unit,
     onBookReady: (String, String, String, List<TocEntry>) -> Unit,
     onTapped: () -> Unit,
-    onSelected: (String, String) -> Unit,
+    onSelected: (String, String, Boolean) -> Unit,
     onTapPage: (Boolean) -> Unit,
     onRelocated: (String, Double?, Int?, Int?, String, String) -> Unit,
     onReaderError: (String) -> Unit,
@@ -1383,7 +1394,18 @@ private fun ReaderView(
                 }
                 .build()
 
-            WebView(context).apply {
+            // The system "Copy / Share" bar would compete with our own selection
+            // panel, so the WebView never starts an action mode.
+            object : WebView(context) {
+                override fun startActionMode(
+                    callback: android.view.ActionMode.Callback?,
+                ): android.view.ActionMode? = null
+
+                override fun startActionMode(
+                    callback: android.view.ActionMode.Callback?,
+                    type: Int,
+                ): android.view.ActionMode? = null
+            }.apply {
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 isVerticalScrollBarEnabled = false
                 isHorizontalScrollBarEnabled = false
@@ -1435,7 +1457,7 @@ private fun ReaderView(
                             val cfi = data.optString("cfi")
                             val selected = data.optString("text").normalizedText()
                             if (cfi.startsWith("epubcfi(") && selected.isNotBlank()) {
-                                onSelected(cfi, selected)
+                                onSelected(cfi, selected, data.optBoolean("lower", true))
                             }
                         }
                         "TappedPrevious" -> onTapPage(false)
