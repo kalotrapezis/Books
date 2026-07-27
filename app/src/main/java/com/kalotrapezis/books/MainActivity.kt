@@ -133,8 +133,52 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 private const val READER_ORIGIN = "appassets.androidplatform.net"
-private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=43"
+private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=55"
 private const val EPUB_MIME_TYPE = "application/epub+zip"
+
+/**
+ * foliate-js sniffs zip and PDF headers itself, but tells CBZ, FBZ and FB2 apart by file
+ * name, so a book is served to the reader under its own extension. Anything else is
+ * offered to the EPUB loader, which fails with a clean message.
+ */
+private val BOOK_MIME_TYPES = mapOf(
+    "epub" to EPUB_MIME_TYPE,
+    "pdf" to "application/pdf",
+    "cbz" to "application/vnd.comicbook+zip",
+    "fb2" to "application/x-fictionbook+xml",
+    "fbz" to "application/x-zip-compressed-fb2",
+    "mobi" to "application/x-mobipocket-ebook",
+    "azw" to "application/vnd.amazon.ebook",
+    "azw3" to "application/vnd.amazon.ebook",
+    "kf8" to "application/vnd.amazon.ebook",
+    "prc" to "application/x-mobipocket-ebook",
+)
+
+// SAF greys out anything outside the filter, and CBZ, FB2 and MOBI usually reach the
+// picker with no registered MIME type at all, so the filter would hide real books. The
+// reader rejects what it cannot parse with a clear message instead.
+private val PICKER_MIME_TYPES = arrayOf("*/*")
+
+/** `selected.<ext>`: the name the reader asks for, and the only one we will serve. */
+private fun bookFileName(context: Context, uri: Uri): String {
+    val extension = displayName(context, uri).substringAfterLast('.', "").lowercase()
+    return "selected." + if (extension in BOOK_MIME_TYPES) extension else "epub"
+}
+
+/** The file's own name; PDFs and comics rarely carry a title, so it stands in for one. */
+private fun displayName(context: Context, uri: Uri): String {
+    val name = runCatching {
+        context.contentResolver.query(
+            uri,
+            arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null,
+        )?.use { if (it.moveToFirst()) it.getString(0) else null }
+    }.getOrNull() ?: uri.lastPathSegment.orEmpty()
+    return name
+}
+
 private const val PREFERENCES_NAME = "reader-state"
 private const val BOOK_URI_KEY = "book-uri"
 private const val LAST_CFI_KEY = "last-cfi"
@@ -303,7 +347,7 @@ private fun BooksApp() {
                 )
             }.exceptionOrNull()
             if (permissionFailure != null) {
-                error = "Could not keep access to this EPUB."
+                error = "Could not keep access to this book."
             } else {
                 scope.launch {
                     runCatching { addOrOpenBook(context, dao, uri) }
@@ -312,13 +356,13 @@ private fun BooksApp() {
                             error = ""
                         }
                         .onFailure {
-                            error = "Could not add EPUB: ${it.message ?: "unknown error"}"
+                            error = "Could not add book: ${it.message ?: "unknown error"}"
                         }
                 }
             }
         }
     }
-    val launchPicker = { openBook.launch(arrayOf(EPUB_MIME_TYPE)) }
+    val launchPicker = { openBook.launch(PICKER_MIME_TYPES) }
     val selectBook: (BookEntity) -> Unit = { book ->
         selectedBookId = book.id
         scope.launch { dao.markOpened(book.id, System.currentTimeMillis()) }
@@ -455,13 +499,13 @@ private fun LibraryPane(
                 Icon(Icons.Filled.Settings, contentDescription = "Settings")
             }
         }
-        Button(onClick = onAddBook) { Text("Add EPUB") }
+        Button(onClick = onAddBook) { Text("Add book") }
         if (error.isNotBlank()) {
             Text(error, color = MaterialTheme.colorScheme.error)
         }
         if (books.isEmpty()) {
             Text("Your local library is empty.")
-            Text("Add an EPUB to read it offline.")
+            Text("Add a book to read it offline.")
         } else {
             LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
                 items(books, key = { it.id }) { book ->
@@ -502,7 +546,7 @@ private fun LibraryBookRow(
             CoverThumbnail(book.coverPath)
             Column {
                 Text(
-                    text = book.title.ifBlank { "Opening EPUB…" },
+                    text = book.title.ifBlank { "Opening book…" },
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -716,6 +760,9 @@ private fun ReaderScreen(
     var readerReady by remember(book.id) { mutableStateOf(false) }
     var chromeVisible by remember(book.id) { mutableStateOf(true) }
     var toc by remember(book.id) { mutableStateOf(emptyList<TocEntry>()) }
+    // Comics and PDF keep their own fixed layout: scrolled mode does not apply to them,
+    // and pretending it does leaves them with no way to turn a page at all.
+    var fixedLayout by remember(book.id) { mutableStateOf(false) }
     var showChapters by remember(book.id) { mutableStateOf(false) }
     var showBookmarks by remember(book.id) { mutableStateOf(false) }
     var showAnnotations by remember(book.id) { mutableStateOf(false) }
@@ -839,13 +886,14 @@ private fun ReaderScreen(
     // ponytail: bookmarks match on the exact CFI string; compare with epubcfi.js in the
     // reader if a bookmark ever needs to survive a re-render that shifts the CFI.
     val bookmarked = currentCfi != null && currentCfi in bookmarks
+    val scrolling = scrolled && !fixedLayout
 
-    LaunchedEffect(readerReady, scrolled) {
+    LaunchedEffect(readerReady, scrolling) {
         if (readerReady) {
             send(
                 JSONObject()
                     .put("type", "SetFlow")
-                    .put("flow", if (scrolled) "scrolled" else "paginated"),
+                    .put("flow", if (scrolling) "scrolled" else "paginated"),
             )
         }
     }
@@ -896,9 +944,10 @@ private fun ReaderScreen(
                         readerReady = false
                     }
                 },
-                onBookReady = { title, author, identifier, chapters ->
+                onBookReady = { title, author, identifier, chapters, fixed ->
                     error = ""
                     toc = chapters
+                    fixedLayout = fixed
                     persistenceScope.launch {
                         dao.updateMetadata(
                             id = book.id,
@@ -1179,7 +1228,7 @@ private fun ReaderScreen(
                     TextButton(onClick = { showAnnotations = true }) { Text("Annotations") }
                 }
             }
-            if (!scrolled) {
+            if (!scrolling) {
                 ReaderControls(
                     progress = progress,
                     printPage = printPage,
@@ -1198,7 +1247,7 @@ private fun ReaderScreen(
 
         // Scrolled mode scrubs from the side, so the toolbar keeps the bottom.
         AnimatedVisibility(
-            visible = chromeVisible && selection == null && scrolled,
+            visible = chromeVisible && selection == null && scrolling,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.CenterStart),
@@ -1679,7 +1728,7 @@ private fun ReaderTopBar(
             }
             Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
                 Text(
-                    text = book.title.ifBlank { "Opening EPUB…" },
+                    text = book.title.ifBlank { "Opening book…" },
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -1947,7 +1996,7 @@ private fun ReaderView(
     book: BookEntity,
     onBridgeReady: (JavaScriptReplyProxy) -> Unit,
     onBridgeClosed: (JavaScriptReplyProxy?) -> Unit,
-    onBookReady: (String, String, String, List<TocEntry>) -> Unit,
+    onBookReady: (String, String, String, List<TocEntry>, Boolean) -> Unit,
     onTapped: () -> Unit,
     onAnnotationTapped: (String) -> Unit,
     onSelected: (String, String, Boolean) -> Unit,
@@ -1960,6 +2009,10 @@ private fun ReaderView(
         modifier = modifier,
         factory = { context ->
             val bookUri = Uri.parse(book.uri)
+            val bookFile = bookFileName(context, bookUri)
+            val fallbackTitle = displayName(context, bookUri)
+                .substringBeforeLast('.').normalizedText()
+                .ifBlank { "Untitled book" }
             val assetLoader = WebViewAssetLoader.Builder()
                 .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(context))
                 .addPathHandler("/state/") { path ->
@@ -1970,14 +2023,18 @@ private fun ReaderView(
                     }
                 }
                 .addPathHandler("/book/") { path ->
-                    if (path != "selected.epub") {
+                    if (path != bookFile) {
                         blockedResponse()
                     } else {
                         val stream = runCatching {
                             context.contentResolver.openInputStream(bookUri)
                         }.getOrNull()
                         if (stream == null) blockedResponse()
-                        else WebResourceResponse(EPUB_MIME_TYPE, null, stream)
+                        else WebResourceResponse(
+                            BOOK_MIME_TYPES[bookFile.substringAfterLast('.')] ?: EPUB_MIME_TYPE,
+                            null,
+                            stream,
+                        )
                     }
                 }
                 .build()
@@ -2020,10 +2077,11 @@ private fun ReaderView(
                         ?: return@addWebMessageListener
                     when (data.optString("type")) {
                         "BookReady" -> onBookReady(
-                            data.optString("title").normalizedText(),
+                            data.optString("title").normalizedText().ifBlank { fallbackTitle },
                             data.optString("author").normalizedText(),
                             data.optString("identifier").normalizedText(),
                             data.optJSONArray("toc").toTocEntries(),
+                            data.optBoolean("fixedLayout"),
                         )
                         "Relocated" -> {
                             val cfi = data.optString("cfi")
@@ -2056,7 +2114,7 @@ private fun ReaderView(
                         )
                     }
                 }
-                loadUrl("$READER_URL&book=selected")
+                loadUrl("$READER_URL&book=$bookFile")
             }
         },
         onRelease = { view ->

@@ -25,8 +25,10 @@ No DRM. No network permission.
 
 **Library**
 
-- Add EPUBs through the system picker; access survives reboots.
-- Cover thumbnails read straight from the EPUB, stored bounded and app-private.
+- Add books through the system picker; access survives reboots.
+- EPUB, PDF and CBZ comics, plus whatever else `foliate-js` can open
+  (MOBI/AZW3, FB2/FBZ are wired up but not yet tested on real files).
+- Cover thumbnails read straight from the book, stored bounded and app-private.
 - Independent reading position per book, restored after a force stop.
 - Long press a book for its details: identifiers, SHA-256, counts, dates.
 

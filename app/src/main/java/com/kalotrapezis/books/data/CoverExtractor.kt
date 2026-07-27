@@ -3,6 +3,7 @@ package com.kalotrapezis.books.data
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.util.Xml
 import java.io.ByteArrayInputStream
@@ -13,6 +14,7 @@ import org.xmlpull.v1.XmlPullParser
 
 private const val MAX_COVER_BYTES = 8 * 1024 * 1024
 private const val MAX_COVER_PIXELS = 512
+private val IMAGE_EXTENSIONS = listOf(".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif")
 
 /**
  * Reads the cover image straight from the EPUB zip and stores a bounded JPEG thumbnail in
@@ -22,13 +24,9 @@ private const val MAX_COVER_PIXELS = 512
 object CoverExtractor {
     /** Returns the stored thumbnail path, or null when the book has no usable cover. */
     fun extract(context: Context, uri: Uri, bookId: String): String? {
-        val opfPath = readEntry(context, uri, "META-INF/container.xml")
-            ?.let { rootfilePath(it) } ?: return null
-        val opf = readEntry(context, uri, opfPath) ?: return null
-        val coverHref = coverHref(opf) ?: return null
-        val coverPath = resolve(opfPath, coverHref)
-        val bytes = readEntry(context, uri, coverPath) ?: return null
-        val bitmap = decodeBounded(bytes) ?: return null
+        val bitmap = (epubCover(context, uri) ?: firstImage(context, uri))?.let { decodeBounded(it) }
+            ?: pdfCover(context, uri)
+            ?: return null
 
         val file = File(context.filesDir, "covers").apply { mkdirs() }
             .let { File(it, "$bookId.jpg") }
@@ -41,6 +39,51 @@ object CoverExtractor {
     fun delete(path: String?) {
         path?.let { runCatching { File(it).delete() } }
     }
+
+    private fun epubCover(context: Context, uri: Uri): ByteArray? {
+        val opfPath = readEntry(context, uri, "META-INF/container.xml")
+            ?.let { rootfilePath(it) } ?: return null
+        val opf = readEntry(context, uri, opfPath) ?: return null
+        val coverHref = coverHref(opf) ?: return null
+        return readEntry(context, uri, resolve(opfPath, coverHref))
+    }
+
+    /** A comic book has no manifest: its cover is the first page in name order. */
+    private fun firstImage(context: Context, uri: Uri): ByteArray? {
+        val first = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                ZipInputStream(input).use { zip ->
+                    generateSequence { zip.nextEntry }
+                        .map { it.name }
+                        .filter { name ->
+                            IMAGE_EXTENSIONS.any { name.endsWith(it, ignoreCase = true) }
+                        }
+                        .minOrNull()
+                }
+            }
+        }.getOrNull() ?: return null
+        return readEntry(context, uri, first)
+    }
+
+    /** A PDF has no zip entries: render its first page with the platform renderer. */
+    private fun pdfCover(context: Context, uri: Uri): Bitmap? = runCatching {
+        context.contentResolver.openFileDescriptor(uri, "r")?.use { fd ->
+            PdfRenderer(fd).use { renderer ->
+                if (renderer.pageCount < 1) return@use null
+                renderer.openPage(0).use { page ->
+                    val scale = MAX_COVER_PIXELS.toFloat() / maxOf(page.width, page.height)
+                    val bitmap = Bitmap.createBitmap(
+                        maxOf(1, (page.width * scale).toInt()),
+                        maxOf(1, (page.height * scale).toInt()),
+                        Bitmap.Config.ARGB_8888,
+                    )
+                    bitmap.eraseColor(android.graphics.Color.WHITE)
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    bitmap
+                }
+            }
+        }
+    }.getOrNull()
 
     private fun readEntry(context: Context, uri: Uri, path: String): ByteArray? = runCatching {
         context.contentResolver.openInputStream(uri)?.use { input ->

@@ -2,7 +2,11 @@ const status = document.querySelector('#status')
 let CFI
 let selectable = false
 let theme = null
+/** value → { annotation, index }, redrawn whenever a section gets a fresh overlayer. */
+const annotations = new Map()
 let typography = null
+/** Fixed-layout zoom: null means fit the whole page, a number is a pinch scale. */
+let zoom = null
 
 const send = message => globalThis.booksBridge?.postMessage(JSON.stringify(message))
 const text = value => typeof value === 'string'
@@ -32,13 +36,23 @@ try {
     if (CFI.compare(sample, sample) !== 0)
         throw new Error('CFI comparison failed')
 
-    if (!new URLSearchParams(location.search).has('book')) {
+    const bookFile = new URLSearchParams(location.search).get('book')
+    if (!bookFile) {
         status.textContent = 'foliate-js loaded: EPUB CFI ready'
+    } else if (!/^selected\.[a-z0-9]{2,4}$/.test(bookFile)) {
+        throw new Error('Unsupported book file')
     } else {
-        status.textContent = 'Opening EPUB…'
+        status.textContent = 'Opening book…'
+        if (bookFile.endsWith('.pdf')) {
+            // Import pdf.js first so its worker can be pointed at our polyfilled shim.
+            await import('./polyfills.mjs')
+            await import('../pdf.js')
+            globalThis.pdfjsLib.GlobalWorkerOptions.workerSrc =
+                new URL('./pdf-worker.mjs', import.meta.url).toString()
+        }
         const { makeBook } = await import('../view.js')
         const { Overlayer } = await import('../overlayer.js')
-        const book = await makeBook('/book/selected.epub')
+        const book = await makeBook(`/book/${bookFile}`)
         document.body.dataset.readerStage = 'book-parsed'
         secureBookContent(book)
         const { cfi: lastLocation } = await fetch('/state/last-location.json')
@@ -57,14 +71,27 @@ try {
             const { draw, annotation } = detail
             draw(Overlayer.highlight, { color: annotation.color || 'yellow' })
         })
+        // foliate-js draws an annotation only if its section is rendered right now, and
+        // keeps no list of its own: without this, highlights vanish the moment you leave
+        // the section, and an import never shows up outside the open one.
+        view.addEventListener('create-overlay', ({ detail }) => {
+            for (const { annotation, index } of annotations.values())
+                if (index === detail.index) view.addAnnotation(annotation)
+        })
         view.addEventListener('show-annotation', ({ detail }) =>
             send({ type: 'AnnotationTapped', cfi: detail.value }))
         send({
             type: 'BookReady',
-            title: text(languageMap(book.metadata?.title)) || 'Untitled book',
+            // Blank means "no title in the file": the app falls back to the file name.
+            // Comics take their title from the path we served them under, which is not
+            // one, so that is blanked too.
+            title: text(languageMap(book.metadata?.title)).replace(/^\/book\/.*/, ''),
             author: contributor(book.metadata?.author),
             identifier: text(book.metadata?.identifier),
             toc: flattenToc(book.toc),
+            // Comics and PDF: their renderer ignores the flow setting, so the app keeps
+            // the paginated controls for them instead of the scrolled ones.
+            fixedLayout: Boolean(view.isFixedLayout),
         })
         document.body.dataset.readerStage = 'view-open'
         // A tap anywhere on the page toggles the native UI; a horizontal drag
@@ -74,12 +101,34 @@ try {
             if (!doc) return
             let start = null
             let swiped = false
+            let pinchStart = null
+            const spread = event => Math.hypot(
+                event.touches[0].clientX - event.touches[1].clientX,
+                event.touches[0].clientY - event.touches[1].clientY)
             doc.addEventListener('touchstart', event => {
+                // Two fingers on a PDF or comic zoom it. Reflowable books have the
+                // text size setting instead, so their gestures are left alone.
+                if (view.isFixedLayout && event.touches.length === 2) {
+                    pinchStart = { distance: spread(event), zoom }
+                    start = null
+                    return
+                }
                 const touch = event.touches[0]
                 start = touch ? { x: touch.clientX, y: touch.clientY } : null
                 swiped = false
             }, { passive: true })
+            doc.addEventListener('touchmove', event => {
+                if (!pinchStart || event.touches.length !== 2) return
+                const factor = spread(event) / (pinchStart.distance || 1)
+                setZoom(pinchStart.zoom * factor)
+            }, { passive: true })
+            // Back to a whole page, so a zoomed-in reader is never stuck panning.
+            doc.addEventListener('dblclick', () => setZoom(null))
             doc.addEventListener('touchend', event => {
+                if (pinchStart) {
+                    if (event.touches.length === 0) pinchStart = null
+                    return
+                }
                 const touch = event.changedTouches[0]
                 if (!start || !touch) return
                 const dx = touch.clientX - start.x
@@ -97,7 +146,11 @@ try {
                     return
                 }
                 if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return
-                if (!doc.defaultView?.getSelection()?.isCollapsed) return
+                // Zoomed in, a drag pans the page; double tap to fit it and turn again.
+                if (zoom !== null) return
+                // A page with no text at all (comics, PDF images) has no selection
+                // object; that is not an open selection, it is nothing to protect.
+                if (doc.defaultView?.getSelection()?.isCollapsed === false) return
                 swiped = true
                 send({ type: dx > 0 ? 'TappedPrevious' : 'TappedNext' })
             }, { passive: true })
@@ -124,7 +177,9 @@ try {
                     return
                 }
                 if (event.target?.closest?.('a')) return
-                if (!doc.defaultView?.getSelection()?.isCollapsed) return
+                // A page with no text at all (comics, PDF images) has no selection
+                // object; that is not an open selection, it is nothing to protect.
+                if (doc.defaultView?.getSelection()?.isCollapsed === false) return
                 send({ type: 'Tapped' })
             })
         })
@@ -221,11 +276,13 @@ try {
                 && Object.keys(command).length === 3
                 && validCfi(command.cfi)
                 && /^[a-z]{3,12}$/.test(command.color ?? '')) {
+                const annotation = { value: command.cfi, color: command.color }
                 commandQueue = commandQueue
-                    .then(() => view.addAnnotation({
-                        value: command.cfi,
-                        color: command.color,
-                    }))
+                    .then(() => view.addAnnotation(annotation))
+                    .then(result => annotations.set(
+                        annotation.value,
+                        { annotation, index: result?.index },
+                    ))
                     .catch(showReaderError)
                 return
             }
@@ -234,6 +291,7 @@ try {
                 && validCfi(command.cfi)) {
                 commandQueue = commandQueue
                     .then(() => view.deleteAnnotation({ value: command.cfi }))
+                    .then(() => annotations.delete(command.cfi))
                     .catch(showReaderError)
                 return
             }
@@ -282,7 +340,8 @@ try {
                 if (view.renderer.getContents().length) {
                     clearInterval(contentTimer)
                     try {
-                        view.renderer.render()
+                        // The fixed-layout renderer (PDF, comics) lays itself out.
+                        view.renderer.render?.()
                     } catch (error) {
                         showReaderError(error)
                     }
@@ -291,9 +350,9 @@ try {
                     showReaderError(new Error('Reader section did not load'))
                 }
             }, 25)
-            Promise.resolve(restoreLocation
-                ? view.init({ lastLocation: restoreLocation })
-                : view.renderer.firstSection())
+            // init() handles both cases and works on either renderer: with no saved
+            // location it simply opens the first page.
+            Promise.resolve(view.init({ lastLocation: restoreLocation }))
                 .then(() => {
                     if (!restoring) return
                     restoring = false
@@ -321,6 +380,13 @@ function secureBookContent(book) {
         event.detail.data = Promise.resolve(event.detail.data)
             .then(data => sanitizeDocument(data, event.detail.type))
     })
+}
+
+/** Pinch zoom for PDF and comics; foliate re-renders PDF pages at the new scale. */
+function setZoom(value) {
+    zoom = value === null ? null : Math.min(6, Math.max(0.5, value))
+    document.querySelector('foliate-view')?.renderer
+        ?.setAttribute('zoom', zoom ?? 'fit-page')
 }
 
 /** Reading mode swallows selection so a stray touch never interrupts the page. */

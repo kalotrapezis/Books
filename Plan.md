@@ -284,7 +284,13 @@ random-access loader.
 - Συγχρονισμός με ένα αρχείο ανά βιβλίο μέσα σε συγχρονισμένο φάκελο
   (Syncthing/Nextcloud), με μόνιμη άδεια ανάγνωσης/εγγραφής.
 - Επαληθεύτηκε με πραγματικό αρχείο εξαγωγής Foliate (567 annotations).
-- Εκκρεμούν: HTML/Markdown/ORG export και golden fixtures.
+- HTML/Markdown/ORG export και golden fixture από πραγματικό Foliate: έτοιμα.
+- Διορθώθηκε σοβαρό σφάλμα εμφάνισης: το `foliate-js` σχεδιάζει ένα annotation μόνο
+  αν η ενότητά του είναι φορτωμένη εκείνη τη στιγμή και δεν κρατά δικό του
+  κατάλογο. Έτσι τα highlights εξαφανίζονταν μόλις άλλαζε ενότητα και ένα import
+  δεν φαινόταν πουθενά εκτός της ανοιχτής ενότητας. Πλέον το `check.js` κρατά
+  `Map` με value → {annotation, index} και τα ξανασχεδιάζει στο `create-overlay`
+  κάθε ενότητας, όπως κάνει και το ίδιο το Foliate.
 
 ### Φάση 3 — PDF και επιπλέον formats
 
@@ -294,6 +300,41 @@ random-access loader.
 - CBZ.
 - Μεγάλα αρχεία και bounded memory.
 - Καθαρό error για password-protected files.
+
+Τρέχουσα πρόοδος:
+
+- Το βιβλίο σερβίρεται πλέον με τη δική του κατάληξη (`selected.<ext>`) και το
+  αντίστοιχο MIME. Το `foliate-js` αναγνωρίζει zip και PDF από τα bytes, αλλά
+  ξεχωρίζει CBZ, FBZ και FB2 από το όνομα, οπότε αυτό ήταν το μόνο που έλειπε
+  για να δουλέψουν οι υπόλοιποι loaders του ίδιου, ελεγμένου engine.
+- Ο picker δέχεται `*/*`: CBZ, FB2 και MOBI φτάνουν συνήθως χωρίς δηλωμένο MIME
+  και το SAF τα γκριζάριζε. Ό,τι δεν αναλύεται δίνει καθαρό μήνυμα λάθους.
+- PDF: το PDF.js 5 χρησιμοποιεί `Uint8Array.toHex/fromHex/toBase64` και
+  `Map.getOrInsertComputed`, που το Android WebView δεν έχει ακόμη. Το
+  `reader/polyfills.mjs` τα συμπληρώνει, και επειδή ο worker έχει δικό του
+  global, το `reader/pdf-worker.mjs` είναι shim που πρώτα φορτώνει τα polyfills
+  και μετά τον πραγματικό worker.
+- Το fixed-layout renderer (PDF, comics) δεν έχει `render()`/`firstSection()`:
+  η εκκίνηση περνά πλέον πάντα από το `view.init()` και το `render()` καλείται
+  προαιρετικά.
+- Εξώφυλλο για CBZ: όταν δεν υπάρχει EPUB manifest, χρησιμοποιείται η πρώτη
+  εικόνα του zip κατά σειρά ονόματος.
+- Τίτλος: PDF και comics σπάνια έχουν, οπότε η εφαρμογή πέφτει πίσω στο όνομα
+  του αρχείου αντί για «Untitled book».
+- Επαληθεύτηκαν σε emulator tablet (Android 36, 10.1"): PDF δύο σελίδων με
+  σελιδοποίηση και seek bar, CBZ με εξώφυλλο και σελίδες, μικρό EPUB και
+  πραγματικό EPUB 1,4 MB με 4721 σελίδες.
+- Εξώφυλλο για PDF: όταν το αρχείο δεν είναι zip, η πρώτη σελίδα αποδίδεται με
+  τον native `PdfRenderer` του Android και αποθηκεύεται ως η ίδια οριοθετημένη
+  μικρογραφία. Δεν εμπλέκεται PDF.js ούτε το WebView. Επαληθεύτηκε σε emulator.
+- Μετρήσεις μνήμης σε μεγάλο PDF (18,2 MB, 77 σελίδες, emulator tablet Android
+  36): πέντε πλήρεις διαδρομές μπρος-πίσω. Ο WebView renderer σταθεροποιήθηκε
+  γύρω στα 630 MB RSS (613–630 στις διαδρομές 2–5, χωρίς αύξηση στις τελευταίες)
+  και το app έμεινε στα ~265 MB. Η χρήση είναι bounded· η απόλυτη τιμή είναι
+  υψηλή επειδή ο emulator δεν ασκεί memory pressure στα caches του Chromium.
+- Εκκρεμούν: MOBI/AZW3 και FB2/FBZ σε πραγματικά αρχεία, tap-to-turn μέσα σε
+  σελίδα PDF/comic, password-protected αρχεία, και το fit της σελίδας fixed
+  layout στο viewport (η σελίδα δεν κεντράρεται ούτε χωράει ολόκληρη σε ύψος).
 
 ### Φάση 4 — Πλήρες feature set
 
