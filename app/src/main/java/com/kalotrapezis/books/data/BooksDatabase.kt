@@ -35,6 +35,8 @@ data class BookEntity(
     val bookmarks: String? = null,
     /** Foliate-compatible JSON array of {value, color, text, created, modified}. */
     val annotations: String? = null,
+    /** Fields from an imported Foliate file that we do not model, kept for export. */
+    val foliateExtras: String? = null,
     val addedAt: Long,
     val lastOpenedAt: Long,
 )
@@ -67,6 +69,7 @@ abstract class BookDao {
                     progressFraction = book.progressFraction ?: existing.progressFraction,
                     coverPath = book.coverPath ?: existing.coverPath,
                     annotations = book.annotations ?: existing.annotations,
+                    foliateExtras = book.foliateExtras ?: existing.foliateExtras,
                 )
             )
         }
@@ -101,9 +104,20 @@ abstract class BookDao {
 
     @Query("UPDATE books SET annotations = :annotations WHERE id = :id")
     abstract suspend fun updateAnnotations(id: String, annotations: String?)
+
+    @Query("""
+        UPDATE books SET annotations = :annotations, bookmarks = :bookmarks,
+        foliateExtras = :extras WHERE id = :id
+    """)
+    abstract suspend fun applyImport(
+        id: String,
+        annotations: String,
+        bookmarks: String,
+        extras: String,
+    )
 }
 
-@Database(entities = [BookEntity::class], version = 4, exportSchema = true)
+@Database(entities = [BookEntity::class], version = 5, exportSchema = true)
 abstract class BooksDatabase : RoomDatabase() {
     abstract fun bookDao(): BookDao
 
@@ -115,7 +129,7 @@ abstract class BooksDatabase : RoomDatabase() {
                 context.applicationContext,
                 BooksDatabase::class.java,
                 "books.db",
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build().also { instance = it }
         }
 
@@ -128,6 +142,12 @@ abstract class BooksDatabase : RoomDatabase() {
         val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE books ADD COLUMN bookmarks TEXT")
+            }
+        }
+
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE books ADD COLUMN foliateExtras TEXT")
             }
         }
 

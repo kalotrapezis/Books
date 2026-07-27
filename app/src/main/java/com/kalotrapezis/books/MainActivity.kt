@@ -52,6 +52,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -84,6 +85,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toArgb
@@ -102,6 +104,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.documentfile.provider.DocumentFile
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
@@ -110,6 +113,8 @@ import com.kalotrapezis.books.data.BookEntity
 import com.kalotrapezis.books.data.BookIdentifiers
 import com.kalotrapezis.books.data.BooksDatabase
 import com.kalotrapezis.books.data.CoverExtractor
+import com.kalotrapezis.books.data.FoliateJson
+import com.kalotrapezis.books.data.toAnnotations
 import java.io.ByteArrayInputStream
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
@@ -132,6 +137,7 @@ private const val FONT_SCALE_KEY = "font-scale"
 private const val LINE_HEIGHT_KEY = "line-height"
 private const val MARGIN_KEY = "margin"
 private const val FONT_KEY = "font"
+private const val SYNC_FOLDER_KEY = "sync-folder"
 
 /** Reader typography, shared by every book. */
 private data class Typography(
@@ -598,6 +604,8 @@ private fun ReaderScreen(
     var showBookmarks by remember(book.id) { mutableStateOf(false) }
     var showAnnotations by remember(book.id) { mutableStateOf(false) }
     var selectionLower by remember(book.id) { mutableStateOf(true) }
+    val readerContext = LocalContext.current
+    val bookmarks = remember(book.bookmarks) { book.bookmarks.toCfiList() }
     var selection by remember(book.id) { mutableStateOf<Pair<String, String>?>(null) }
     val annotations = remember(book.annotations) { book.annotations.toAnnotations() }
     val clipboard = LocalClipboardManager.current
@@ -606,7 +614,108 @@ private fun ReaderScreen(
             .onFailure { error = "Reader command failed: ${it.message ?: "unknown error"}" }
     }
     val sendCommand: (String) -> Unit = { type -> send(JSONObject().put("type", type)) }
-    val bookmarks = remember(book.bookmarks) { book.bookmarks.toCfiList() }
+    var transferNotice by remember(book.id) { mutableStateOf("") }
+    val preferences = remember(readerContext) {
+        readerContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+    }
+    // Merge the book's file inside a synced folder (Syncthing, Nextcloud, …) both ways.
+    val syncWithFolder: (Uri) -> Unit = { tree ->
+        persistenceScope.launch {
+            transferNotice = runCatching {
+                withContext(Dispatchers.IO) {
+                    val folder = DocumentFile.fromTreeUri(readerContext, tree)
+                        ?: error("Folder unavailable")
+                    val name = foliateFileName(book)
+                    val file = folder.findFile(name)
+                    val merged = file?.let {
+                        readerContext.contentResolver.openInputStream(it.uri)
+                            ?.use { stream -> stream.readBytes().decodeToString() }
+                            ?.let { text -> FoliateJson.merge(book, text) }
+                    }
+                    if (merged != null) {
+                        dao.applyImport(
+                            book.id,
+                            merged.annotations,
+                            merged.bookmarks,
+                            merged.extras,
+                        )
+                    }
+                    val target = file ?: folder.createFile("application/json", name)
+                        ?: error("Could not create the file")
+                    val updated = dao.findByUri(book.uri) ?: book
+                    readerContext.contentResolver.openOutputStream(target.uri, "wt")?.use { out ->
+                        out.write(
+                            FoliateJson.export(updated, updated.foliateExtras).toByteArray(),
+                        )
+                    } ?: error("Could not write the file")
+                    merged
+                }?.let { merged ->
+                    merged.annotations.toAnnotations().forEach {
+                        send(
+                            JSONObject().put("type", "Annotate")
+                                .put("cfi", it.optString("value"))
+                                .put("color", it.optString("color").ifBlank { "yellow" }),
+                        )
+                    }
+                    if (merged.identifierMatches) "Synced with the folder."
+                    else "Synced, but the file is from a different book identifier."
+                } ?: "Wrote this book's file to the folder."
+            }.getOrElse { "Sync failed: ${it.message ?: "unknown error"}" }
+        }
+    }
+    val pickSyncFolder = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching {
+            readerContext.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+        }
+        preferences.edit().putString(SYNC_FOLDER_KEY, uri.toString()).apply()
+        syncWithFolder(uri)
+    }
+    val exportFile = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        persistenceScope.launch {
+            transferNotice = runCatching {
+                withContext(Dispatchers.IO) {
+                    readerContext.contentResolver.openOutputStream(uri)?.use { out ->
+                        out.write(FoliateJson.export(book, book.foliateExtras).toByteArray())
+                    } ?: error("Could not write the file")
+                }
+                "Exported Foliate JSON."
+            }.getOrElse { "Export failed: ${it.message ?: "unknown error"}" }
+        }
+    }
+    val importFile = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        persistenceScope.launch {
+            transferNotice = runCatching {
+                val merged = withContext(Dispatchers.IO) {
+                    val text = readerContext.contentResolver.openInputStream(uri)
+                        ?.use { it.readBytes().decodeToString() }
+                        ?: error("Could not read the file")
+                    FoliateJson.merge(book, text)
+                }
+                dao.applyImport(book.id, merged.annotations, merged.bookmarks, merged.extras)
+                merged.annotations.toAnnotations().forEach {
+                    send(
+                        JSONObject().put("type", "Annotate")
+                            .put("cfi", it.optString("value"))
+                            .put("color", it.optString("color").ifBlank { "yellow" }),
+                    )
+                }
+                if (merged.identifierMatches) "Imported Foliate data."
+                else "Imported, but this file is from a different book identifier."
+            }.getOrElse { "Import failed: ${it.message ?: "unknown error"}" }
+        }
+    }
     // ponytail: bookmarks match on the exact CFI string; compare with epubcfi.js in the
     // reader if a bookmark ever needs to survive a re-render that shifts the CFI.
     val bookmarked = currentCfi != null && currentCfi in bookmarks
@@ -732,6 +841,18 @@ private fun ReaderScreen(
             AnnotationsScreen(
                 annotations = annotations,
                 onBack = { showAnnotations = false },
+                onExport = { exportFile.launch(foliateFileName(book)) },
+                onImport = { importFile.launch(arrayOf("application/json", "text/plain", "*/*")) },
+                onSync = {
+                    val folder = preferences.getString(SYNC_FOLDER_KEY, null)
+                    if (folder == null) pickSyncFolder.launch(null) else syncWithFolder(Uri.parse(folder))
+                },
+                syncLabel = if (preferences.getString(SYNC_FOLDER_KEY, null) == null) {
+                    "Choose sync folder"
+                } else {
+                    "Sync now"
+                },
+                notice = transferNotice,
                 onOpen = { cfi ->
                     showAnnotations = false
                     send(JSONObject().put("type", "GoToCfi").put("cfi", cfi))
@@ -819,6 +940,14 @@ private fun ReaderScreen(
                         sendCommand("ClearSelection")
                         selection = null
                     },
+                    onShare = {
+                        val share = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, current.second)
+                            putExtra(Intent.EXTRA_SUBJECT, book.title)
+                        }
+                        readerContext.startActivity(Intent.createChooser(share, null))
+                    },
                     onDismiss = {
                         sendCommand("ClearSelection")
                         selection = null
@@ -885,6 +1014,7 @@ private fun SelectionPanel(
     note: String,
     onHighlight: (String?, String) -> Unit,
     onCopy: () -> Unit,
+    onShare: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var draft by remember(excerpt) { mutableStateOf(note) }
@@ -892,7 +1022,7 @@ private fun SelectionPanel(
     val focus = remember { FocusRequester() }
     LaunchedEffect(writing) { if (writing) focus.requestFocus() }
 
-    ChromeIsland(Modifier.padding(bottom = 8.dp).fillMaxWidth()) {
+    ChromeIsland(Modifier.padding(bottom = 8.dp).widthIn(max = 420.dp).fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
                 excerpt,
@@ -911,12 +1041,20 @@ private fun SelectionPanel(
                             .clickable { onHighlight(name, draft) },
                     )
                 }
-                // "None" clears an existing highlight.
-                Box(
-                    Modifier.size(30.dp)
-                        .border(1.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
-                        .clickable { onHighlight(null, draft) },
-                )
+                // "None" erases an existing highlight: a struck-through swatch, so it
+                // does not read as yet another colour.
+                val outline = MaterialTheme.colorScheme.onSurface
+                Canvas(
+                    Modifier.size(30.dp).clickable { onHighlight(null, draft) },
+                ) {
+                    drawCircle(outline, style = Stroke(width = 3f))
+                    drawLine(
+                        Color(0xFFE01B24),
+                        start = Offset(size.width * 0.2f, size.height * 0.8f),
+                        end = Offset(size.width * 0.8f, size.height * 0.2f),
+                        strokeWidth = 5f,
+                    )
+                }
             }
             if (writing) {
                 OutlinedTextField(
@@ -931,6 +1069,7 @@ private fun SelectionPanel(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 TextButton(onClick = onCopy) { Text("Copy") }
+                TextButton(onClick = onShare) { Text("Share") }
                 TextButton(onClick = { writing = true }) {
                     Text(if (note.isBlank()) "Note" else "Edit note")
                 }
@@ -948,6 +1087,11 @@ private fun SelectionPanel(
 private fun AnnotationsScreen(
     annotations: List<JSONObject>,
     onBack: () -> Unit,
+    onExport: () -> Unit,
+    onImport: () -> Unit,
+    onSync: () -> Unit,
+    syncLabel: String,
+    notice: String,
     onOpen: (String) -> Unit,
     onRemove: (String) -> Unit,
     modifier: Modifier = Modifier,
@@ -961,6 +1105,13 @@ private fun AnnotationsScreen(
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.padding(start = 8.dp, top = 8.dp),
                 )
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onSync) { Text(syncLabel) }
+                TextButton(onClick = onImport) { Text("Import") }
+                TextButton(onClick = onExport) { Text("Export") }
+            }
+            if (notice.isNotBlank()) {
+                Text(notice, modifier = Modifier.padding(horizontal = 16.dp))
             }
             if (annotations.isEmpty()) {
                 Text(
@@ -1007,6 +1158,13 @@ private fun AnnotationsScreen(
         }
     }
 }
+
+/**
+ * Foliate keeps one file per book in its data directory, named
+ * `encodeURIComponent(key).json`. Matching that means a synced folder just works.
+ */
+private fun foliateFileName(book: BookEntity): String =
+    Uri.encode(book.foliateKey, null).replace("+", "%20") + ".json"
 
 private fun removeAnnotation(existing: List<JSONObject>, cfi: String): JSONArray =
     JSONArray(existing.filterNot { it.optString("value") == cfi }.toList())
