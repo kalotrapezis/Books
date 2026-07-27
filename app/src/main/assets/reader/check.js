@@ -352,17 +352,18 @@ const invert = hex => '#' + [1, 3, 5]
     .join('')
 
 /**
- * Grayscale keeps the book's own distinctions as different greys. On a dark theme the
- * page is inverted too, so the background is set to the inverse of the theme colour and
- * lands back on it; images are inverted a second time to come out unharmed.
+ * Grayscale keeps the book's own distinctions as different greys. The filter goes on
+ * `body`, not `html`: filtering the root inverted the page margins too and left a light
+ * frame around the text. `html` keeps the theme colour, the body paints nothing of its
+ * own, and images are inverted back so they stay themselves.
  */
 function greyFilterCss(theme) {
     const dark = isDark(theme.background)
-    return `html { background: ${dark ? invert(theme.background) : theme.background}`
-        + ` !important; filter: grayscale(1)${dark ? ' invert(1)' : ''} }`
-        + ` body { background: transparent !important }`
+    return `html { background: ${theme.background} !important }`
+        + ` body { background: transparent !important;`
+        + ` filter: grayscale(1)${dark ? ' invert(1)' : ''} }`
         + (dark
-            ? ' img, picture, video, canvas, svg { filter: invert(1) grayscale(0) !important }'
+            ? ' img, picture, video, canvas { filter: invert(1) grayscale(0) !important }'
             : '')
 }
 

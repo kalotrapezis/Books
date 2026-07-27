@@ -125,7 +125,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 private const val READER_ORIGIN = "appassets.androidplatform.net"
-private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=41"
+private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=42"
 private const val EPUB_MIME_TYPE = "application/epub+zip"
 private const val PREFERENCES_NAME = "reader-state"
 private const val BOOK_URI_KEY = "book-uri"
@@ -869,18 +869,7 @@ private fun ReaderScreen(
         }
 
         openedAnnotation?.let { item ->
-            AnnotationNoteDialog(
-                annotation = item,
-                onRemove = {
-                    val cfi = item.optString("value")
-                    persistenceScope.launch {
-                        dao.updateAnnotations(book.id, removeAnnotation(annotations, cfi).toString())
-                    }
-                    send(JSONObject().put("type", "Unannotate").put("cfi", cfi))
-                    openedAnnotation = null
-                },
-                onDismiss = { openedAnnotation = null },
-            )
+            AnnotationNoteDialog(annotation = item, onDismiss = { openedAnnotation = null })
         }
 
         pendingImport?.let { merged ->
@@ -1155,18 +1144,16 @@ private fun SelectionPanel(
     }
 }
 
-/** Tapping a highlight shows its note; the X closes it. */
+/** Quick look at a highlight's note. Deleting lives in the annotations list. */
 @Composable
 private fun AnnotationNoteDialog(
     annotation: JSONObject,
-    onRemove: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val note = annotation.optString("note")
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("✕") } },
-        dismissButton = { TextButton(onClick = onRemove) { Text("Remove") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
