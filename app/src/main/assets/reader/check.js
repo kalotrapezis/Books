@@ -37,6 +37,7 @@ try {
     } else {
         status.textContent = 'Opening EPUB…'
         const { makeBook } = await import('../view.js')
+        const { Overlayer } = await import('../overlayer.js')
         const book = await makeBook('/book/selected.epub')
         document.body.dataset.readerStage = 'book-parsed'
         secureBookContent(book)
@@ -54,6 +55,13 @@ try {
         view.renderer.setAttribute('max-inline-size', '40em')
         view.renderer.setAttribute('max-column-count', '2')
         setSelectable(false)
+        // Draw saved highlights with foliate's own overlayer.
+        view.addEventListener('draw-annotation', ({ detail }) => {
+            const { draw, annotation } = detail
+            draw(Overlayer.highlight, { color: annotation.color || 'yellow' })
+        })
+        view.addEventListener('show-annotation', ({ detail }) =>
+            send({ type: 'AnnotationTapped', cfi: detail.value }))
         send({
             type: 'BookReady',
             title: text(languageMap(book.metadata?.title)) || 'Untitled book',
@@ -85,6 +93,14 @@ try {
                 swiped = true
                 send({ type: dx > 0 ? 'TappedPrevious' : 'TappedNext' })
             }, { passive: true })
+            doc.addEventListener('selectionchange', () => {
+                const selection = doc.defaultView?.getSelection()
+                if (!selection || selection.isCollapsed || !selectable) return
+                const range = selection.getRangeAt(0)
+                const cfi = view.getCFI(detail.index, range)
+                if (!validCfi(cfi)) return
+                send({ type: 'Selected', cfi, text: text(selection.toString()) })
+            })
             doc.addEventListener('click', event => {
                 if (swiped) {
                     swiped = false
@@ -176,6 +192,32 @@ try {
                     margin: Math.min(96, Math.max(0, command.margin)),
                     font: command.font,
                 })
+                return
+            }
+            if (command.type === 'Annotate'
+                && Object.keys(command).length === 3
+                && validCfi(command.cfi)
+                && /^[a-z]{3,12}$/.test(command.color ?? '')) {
+                commandQueue = commandQueue
+                    .then(() => view.addAnnotation({
+                        value: command.cfi,
+                        color: command.color,
+                    }))
+                    .catch(showReaderError)
+                return
+            }
+            if (command.type === 'Unannotate'
+                && Object.keys(command).length === 2
+                && validCfi(command.cfi)) {
+                commandQueue = commandQueue
+                    .then(() => view.deleteAnnotation({ value: command.cfi }))
+                    .catch(showReaderError)
+                return
+            }
+            if (command.type === 'ClearSelection'
+                && Object.keys(command).length === 1) {
+                for (const { doc } of view.renderer.getContents())
+                    doc?.defaultView?.getSelection()?.removeAllRanges()
                 return
             }
             if (command.type === 'SetSelectable'

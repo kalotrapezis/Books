@@ -87,8 +87,10 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -111,7 +113,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 private const val READER_ORIGIN = "appassets.androidplatform.net"
-private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=37"
+private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=38"
 private const val EPUB_MIME_TYPE = "application/epub+zip"
 private const val PREFERENCES_NAME = "reader-state"
 private const val BOOK_URI_KEY = "book-uri"
@@ -587,6 +589,9 @@ private fun ReaderScreen(
     var showChapters by remember(book.id) { mutableStateOf(false) }
     var showBookmarks by remember(book.id) { mutableStateOf(false) }
     var selectable by remember(book.id) { mutableStateOf(false) }
+    var selection by remember(book.id) { mutableStateOf<Pair<String, String>?>(null) }
+    val annotations = remember(book.annotations) { book.annotations.toAnnotations() }
+    val clipboard = LocalClipboardManager.current
     val send: (JSONObject) -> Unit = { command ->
         runCatching { bridge?.postMessage(command.toString()) }
             .onFailure { error = "Reader command failed: ${it.message ?: "unknown error"}" }
@@ -617,6 +622,16 @@ private fun ReaderScreen(
                     .put("foreground", theme.hex(theme.foreground))
                     .put("background", theme.hex(theme.background))
                     .put("link", theme.hex(theme.link)),
+            )
+        }
+    }
+    LaunchedEffect(readerReady, book.annotations) {
+        if (readerReady) annotations.forEach { annotation ->
+            send(
+                JSONObject()
+                    .put("type", "Annotate")
+                    .put("cfi", annotation.optString("value"))
+                    .put("color", annotation.optString("color").ifBlank { "yellow" }),
             )
         }
     }
@@ -674,7 +689,11 @@ private fun ReaderScreen(
                     error = it
                     readerReady = false
                 },
-                onTapped = { chromeVisible = !chromeVisible },
+                onTapped = {
+                    chromeVisible = !chromeVisible
+                    selection = null
+                },
+                onSelected = { cfi, selectedText -> selection = cfi to selectedText },
                 onTapPage = { forward -> sendCommand(if (forward) "Next" else "Previous") },
                 // No inset: the chrome floats over the page, so the text never reflows
                 // when it appears.
@@ -740,6 +759,31 @@ private fun ReaderScreen(
             modifier = Modifier.align(Alignment.BottomCenter),
         ) {
           Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            val current = selection
+            if (current != null) {
+                HighlightMenu(
+                    onHighlight = { color ->
+                        val (cfi, selected) = current
+                        persistenceScope.launch {
+                            dao.updateAnnotations(
+                                book.id,
+                                addAnnotation(annotations, cfi, color, selected).toString(),
+                            )
+                        }
+                        send(
+                            JSONObject().put("type", "Annotate")
+                                .put("cfi", cfi).put("color", color),
+                        )
+                        sendCommand("ClearSelection")
+                        selection = null
+                    },
+                    onCopy = {
+                        clipboard.setText(AnnotatedString(current.second))
+                        sendCommand("ClearSelection")
+                        selection = null
+                    },
+                )
+            }
             ChromeIsland {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(onClick = { showChapters = true }, enabled = toc.isNotEmpty()) {
@@ -774,6 +818,34 @@ private fun ReaderScreen(
                 )
             }
           }
+        }
+    }
+}
+
+/** Colours match Foliate's annotation palette so exported JSON stays compatible. */
+private val HIGHLIGHT_COLORS = listOf(
+    "yellow" to Color(0xFFFFE066),
+    "green" to Color(0xFF9BE29B),
+    "blue" to Color(0xFF9BC7F0),
+    "pink" to Color(0xFFF3A8C8),
+)
+
+@Composable
+private fun HighlightMenu(onHighlight: (String) -> Unit, onCopy: () -> Unit) {
+    ChromeIsland(Modifier.padding(bottom = 8.dp)) {
+        Row(
+            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            HIGHLIGHT_COLORS.forEach { (name, color) ->
+                Box(
+                    Modifier.size(28.dp)
+                        .background(color, CircleShape)
+                        .clickable { onHighlight(name) },
+                )
+            }
+            TextButton(onClick = onCopy) { Text("Copy") }
         }
     }
 }
@@ -1085,6 +1157,29 @@ private fun JSONArray?.toTocEntries(): List<TocEntry> {
     }
 }
 
+/** Foliate annotation records, kept as JSON so unknown fields survive round trips. */
+private fun String?.toAnnotations(): List<JSONObject> = runCatching {
+    val array = JSONArray(this ?: "[]")
+    (0 until array.length()).mapNotNull { array.optJSONObject(it) }
+}.getOrDefault(emptyList())
+
+private fun addAnnotation(
+    existing: List<JSONObject>,
+    cfi: String,
+    color: String,
+    text: String,
+): JSONArray {
+    val now = java.time.Instant.now().toString()
+    val kept = existing.filterNot { it.optString("value") == cfi }
+    val record = JSONObject()
+        .put("value", cfi)
+        .put("color", color)
+        .put("text", text)
+        .put("created", now)
+        .put("modified", now)
+    return JSONArray((kept + record).toList())
+}
+
 private fun String?.toCfiList(): List<String> = runCatching {
     val array = JSONArray(this ?: "[]")
     (0 until array.length()).mapNotNull { array.optString(it).takeIf(String::isNotBlank) }
@@ -1098,6 +1193,7 @@ private fun ReaderView(
     onBridgeClosed: (JavaScriptReplyProxy?) -> Unit,
     onBookReady: (String, String, String, List<TocEntry>) -> Unit,
     onTapped: () -> Unit,
+    onSelected: (String, String) -> Unit,
     onTapPage: (Boolean) -> Unit,
     onRelocated: (String, Double?, Int?, Int?, String, String) -> Unit,
     onReaderError: (String) -> Unit,
@@ -1177,6 +1273,13 @@ private fun ReaderView(
                             }
                         }
                         "Tapped" -> onTapped()
+                        "Selected" -> {
+                            val cfi = data.optString("cfi")
+                            val selected = data.optString("text").normalizedText()
+                            if (cfi.startsWith("epubcfi(") && selected.isNotBlank()) {
+                                onSelected(cfi, selected)
+                            }
+                        }
                         "TappedPrevious" -> onTapPage(false)
                         "TappedNext" -> onTapPage(true)
                         "ReaderError" -> onReaderError(
