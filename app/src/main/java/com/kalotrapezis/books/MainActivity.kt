@@ -323,6 +323,12 @@ private fun BooksApp() {
         selectedBookId = book.id
         scope.launch { dao.markOpened(book.id, System.currentTimeMillis()) }
     }
+    val removeBook: (BookEntity) -> Unit = { book ->
+        scope.launch {
+            withContext(Dispatchers.IO) { CoverExtractor.delete(book.coverPath) }
+            dao.delete(book.id)
+        }
+    }
     val selectedBook = library.firstOrNull { it.id == selectedBookId }
 
     MaterialTheme(colorScheme = theme.colorScheme()) {
@@ -344,6 +350,7 @@ private fun BooksApp() {
                             onSetTypography = setTypography,
                             onAddBook = launchPicker,
                             onSelectBook = selectBook,
+                            onRemoveBook = removeBook,
                             modifier = Modifier.width(280.dp).fillMaxHeight(),
                         )
                         if (selectedBook == null) {
@@ -377,6 +384,7 @@ private fun BooksApp() {
                         onSetTypography = setTypography,
                         onAddBook = launchPicker,
                         onSelectBook = selectBook,
+                        onRemoveBook = removeBook,
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else {
@@ -412,9 +420,21 @@ private fun LibraryPane(
     onSetTypography: (Typography) -> Unit,
     onAddBook: () -> Unit,
     onSelectBook: (BookEntity) -> Unit,
+    onRemoveBook: (BookEntity) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var showSettings by remember { mutableStateOf(false) }
+    var details by remember { mutableStateOf<BookEntity?>(null) }
+    details?.let { book ->
+        BookDetailsDialog(
+            book = book,
+            onRemove = {
+                onRemoveBook(book)
+                details = null
+            },
+            onDismiss = { details = null },
+        )
+    }
     if (showSettings) {
         SettingsDialog(
             scrolled = scrolled,
@@ -449,6 +469,7 @@ private fun LibraryPane(
                         book = book,
                         selected = book.id == selectedBookId,
                         onClick = { onSelectBook(book) },
+                        onShowInfo = { details = book },
                     )
                     HorizontalDivider()
                 }
@@ -458,11 +479,21 @@ private fun LibraryPane(
 }
 
 @Composable
-private fun LibraryBookRow(book: BookEntity, selected: Boolean, onClick: () -> Unit) {
+private fun LibraryBookRow(
+    book: BookEntity,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onShowInfo: () -> Unit,
+) {
     Surface(
         color = if (selected) MaterialTheme.colorScheme.secondaryContainer
         else MaterialTheme.colorScheme.surface,
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        // Long press opens the book's details, the way the ribbon opens bookmarks.
+        modifier = Modifier.fillMaxWidth().combinedClickable(
+            onClick = onClick,
+            onLongClick = onShowInfo,
+            onLongClickLabel = "Book details",
+        ),
     ) {
         Row(
             Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
@@ -504,6 +535,55 @@ private fun CoverThumbnail(coverPath: String?) {
         )
     } ?: Surface(color = MaterialTheme.colorScheme.surfaceVariant, modifier = modifier) {}
 }
+
+/** What Foliate shows in its book properties, with the identifiers we keep. */
+@Composable
+private fun BookDetailsDialog(
+    book: BookEntity,
+    onRemove: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var confirming by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        dismissButton = {
+            TextButton(onClick = { if (confirming) onRemove() else confirming = true }) {
+                Text(if (confirming) "Remove, keep the file" else "Remove")
+            }
+        },
+        title = { Text(book.title.ifBlank { "Untitled book" }) },
+        text = {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                if (book.author.isNotBlank()) DetailRow("Author", book.author)
+                DetailRow("Progress", book.progressFraction.asPercent())
+                DetailRow("Bookmarks", book.bookmarks.toCfiList().size.toString())
+                DetailRow("Annotations", book.annotations.toAnnotations().size.toString())
+                DetailRow("Identifier", book.metadataIdentifier ?: "—")
+                DetailRow("Foliate key", book.foliateKey)
+                DetailRow("SHA-256", book.sha256)
+                DetailRow("Added", book.addedAt.asDate())
+                DetailRow("Last opened", book.lastOpenedAt.asDate())
+                DetailRow("File", Uri.decode(book.uri).substringAfterLast('/'))
+            }
+        },
+    )
+}
+
+@Composable
+private fun DetailRow(label: String, value: String) {
+    Column {
+        Text(label, style = MaterialTheme.typography.labelMedium)
+        Text(value, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+private fun Long.asDate(): String =
+    java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+        .format(java.util.Date(this))
 
 @Composable
 private fun SettingsDialog(
@@ -1041,6 +1121,33 @@ private fun ReaderScreen(
                         sendCommand("ClearSelection")
                         selection = null
                     },
+                    onCite = {
+                        clipboard.setText(
+                            AnnotatedString(
+                                "“${current.second}”\n— ${book.title}" +
+                                    (if (book.author.isBlank()) "" else ", ${book.author}") +
+                                    "\n${current.first}",
+                            ),
+                        )
+                        sendCommand("ClearSelection")
+                        selection = null
+                    },
+                    onLookUp = { service ->
+                        // No network permission here: the selection is handed to whichever
+                        // app the user already trusts with the web.
+                        val query = Uri.encode(current.second.take(200))
+                        val language = java.util.Locale.getDefault().language
+                        val url = when (service) {
+                            "wikipedia" ->
+                                "https://$language.wikipedia.org/wiki/Special:Search?search=$query"
+                            "translate" ->
+                                "https://translate.google.com/?sl=auto&tl=$language&text=$query"
+                            else -> "https://$language.wiktionary.org/wiki/Special:Search?search=$query"
+                        }
+                        runCatching {
+                            readerContext.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                        }.onFailure { error = "No app can open links." }
+                    },
                     onShare = {
                         val share = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
@@ -1129,7 +1236,9 @@ private fun SelectionPanel(
     note: String,
     onHighlight: (String?, String) -> Unit,
     onCopy: () -> Unit,
+    onCite: () -> Unit,
     onShare: () -> Unit,
+    onLookUp: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var draft by remember(excerpt) { mutableStateOf(note) }
@@ -1171,6 +1280,11 @@ private fun SelectionPanel(
                     )
                 }
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = { onLookUp("dictionary") }) { Text("Dictionary") }
+                TextButton(onClick = { onLookUp("wikipedia") }) { Text("Wikipedia") }
+                TextButton(onClick = { onLookUp("translate") }) { Text("Translate") }
+            }
             if (writing) {
                 OutlinedTextField(
                     value = draft,
@@ -1184,6 +1298,7 @@ private fun SelectionPanel(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 TextButton(onClick = onCopy) { Text("Copy") }
+                TextButton(onClick = onCite) { Text("Cite") }
                 TextButton(onClick = onShare) { Text("Share") }
                 TextButton(onClick = { writing = true }) {
                     Text(if (note.isBlank()) "Note" else "Edit note")

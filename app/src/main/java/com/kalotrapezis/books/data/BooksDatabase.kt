@@ -96,6 +96,9 @@ abstract class BookDao {
     @Query("UPDATE books SET lastOpenedAt = :timestamp WHERE id = :id")
     abstract suspend fun markOpened(id: String, timestamp: Long)
 
+    @Query("DELETE FROM books WHERE id = :id")
+    abstract suspend fun delete(id: String)
+
     @Query("UPDATE books SET coverPath = :coverPath WHERE id = :id")
     abstract suspend fun updateCover(id: String, coverPath: String?)
 
