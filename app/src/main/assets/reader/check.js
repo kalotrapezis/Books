@@ -54,7 +54,7 @@ try {
         view.renderer.setAttribute('gap', '7%')
         view.renderer.setAttribute('max-inline-size', '40em')
         view.renderer.setAttribute('max-column-count', '2')
-        setSelectable(false)
+        setSelectable(true)
         // Draw saved highlights with foliate's own overlayer.
         view.addEventListener('draw-annotation', ({ detail }) => {
             const { draw, annotation } = detail
@@ -95,7 +95,7 @@ try {
             }, { passive: true })
             doc.addEventListener('selectionchange', () => {
                 const selection = doc.defaultView?.getSelection()
-                if (!selection || selection.isCollapsed || !selectable) return
+                if (!selection || selection.isCollapsed) return
                 const range = selection.getRangeAt(0)
                 const cfi = view.getCFI(detail.index, range)
                 if (!validCfi(cfi)) return

@@ -26,6 +26,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
@@ -33,6 +34,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -58,6 +60,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
@@ -76,6 +79,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toArgb
@@ -588,7 +593,7 @@ private fun ReaderScreen(
     var toc by remember(book.id) { mutableStateOf(emptyList<TocEntry>()) }
     var showChapters by remember(book.id) { mutableStateOf(false) }
     var showBookmarks by remember(book.id) { mutableStateOf(false) }
-    var selectable by remember(book.id) { mutableStateOf(false) }
+    var showAnnotations by remember(book.id) { mutableStateOf(false) }
     var selection by remember(book.id) { mutableStateOf<Pair<String, String>?>(null) }
     val annotations = remember(book.annotations) { book.annotations.toAnnotations() }
     val clipboard = LocalClipboardManager.current
@@ -612,7 +617,14 @@ private fun ReaderScreen(
         }
     }
     BackHandler(enabled = showChapters) { showChapters = false }
-    BackHandler(enabled = !showChapters && onBack != null) { onBack?.invoke() }
+    BackHandler(enabled = showAnnotations) { showAnnotations = false }
+    BackHandler(enabled = selection != null) {
+        sendCommand("ClearSelection")
+        selection = null
+    }
+    BackHandler(
+        enabled = !showChapters && !showAnnotations && selection == null && onBack != null,
+    ) { onBack?.invoke() }
 
     LaunchedEffect(readerReady, theme) {
         if (readerReady) {
@@ -637,11 +649,6 @@ private fun ReaderScreen(
     }
     LaunchedEffect(readerReady, typography) {
         if (readerReady) send(typography.toJson())
-    }
-    LaunchedEffect(readerReady, selectable) {
-        if (readerReady) {
-            send(JSONObject().put("type", "SetSelectable").put("enabled", selectable))
-        }
     }
 
     Box(modifier) {
@@ -714,6 +721,25 @@ private fun ReaderScreen(
             return@Box
         }
 
+        if (showAnnotations) {
+            AnnotationsScreen(
+                annotations = annotations,
+                onBack = { showAnnotations = false },
+                onOpen = { cfi ->
+                    showAnnotations = false
+                    send(JSONObject().put("type", "GoToCfi").put("cfi", cfi))
+                },
+                onRemove = { cfi ->
+                    persistenceScope.launch {
+                        dao.updateAnnotations(book.id, removeAnnotation(annotations, cfi).toString())
+                    }
+                    send(JSONObject().put("type", "Unannotate").put("cfi", cfi))
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+            return@Box
+        }
+
         if (showBookmarks) {
             BookmarksDialog(
                 bookmarks = bookmarks,
@@ -761,24 +787,34 @@ private fun ReaderScreen(
           Column(horizontalAlignment = Alignment.CenterHorizontally) {
             val current = selection
             if (current != null) {
-                HighlightMenu(
-                    onHighlight = { color ->
+                SelectionPanel(
+                    excerpt = current.second,
+                    note = annotations.noteFor(current.first),
+                    onHighlight = { color, note ->
                         val (cfi, selected) = current
                         persistenceScope.launch {
                             dao.updateAnnotations(
                                 book.id,
-                                addAnnotation(annotations, cfi, color, selected).toString(),
+                                addAnnotation(annotations, cfi, color, selected, note).toString(),
                             )
                         }
                         send(
-                            JSONObject().put("type", "Annotate")
-                                .put("cfi", cfi).put("color", color),
+                            if (color == null) {
+                                JSONObject().put("type", "Unannotate").put("cfi", cfi)
+                            } else {
+                                JSONObject().put("type", "Annotate")
+                                    .put("cfi", cfi).put("color", color)
+                            },
                         )
                         sendCommand("ClearSelection")
                         selection = null
                     },
                     onCopy = {
                         clipboard.setText(AnnotatedString(current.second))
+                        sendCommand("ClearSelection")
+                        selection = null
+                    },
+                    onDismiss = {
                         sendCommand("ClearSelection")
                         selection = null
                     },
@@ -789,9 +825,7 @@ private fun ReaderScreen(
                     TextButton(onClick = { showChapters = true }, enabled = toc.isNotEmpty()) {
                         Text("Chapters")
                     }
-                    TextButton(onClick = { selectable = !selectable }) {
-                        Text(if (selectable) "Reading" else "Annotate")
-                    }
+                    TextButton(onClick = { showAnnotations = true }) { Text("Annotations") }
                 }
             }
             if (scrolled) {
@@ -830,25 +864,141 @@ private val HIGHLIGHT_COLORS = listOf(
     "pink" to Color(0xFFF3A8C8),
 )
 
+/** Colours, note and copy for the current selection; `null` colour clears the highlight. */
 @Composable
-private fun HighlightMenu(onHighlight: (String) -> Unit, onCopy: () -> Unit) {
-    ChromeIsland(Modifier.padding(bottom = 8.dp)) {
-        Row(
-            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            HIGHLIGHT_COLORS.forEach { (name, color) ->
+private fun SelectionPanel(
+    excerpt: String,
+    note: String,
+    onHighlight: (String?, String) -> Unit,
+    onCopy: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var draft by remember(excerpt) { mutableStateOf(note) }
+    var writing by remember(excerpt) { mutableStateOf(false) }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(writing) { if (writing) focus.requestFocus() }
+
+    ChromeIsland(Modifier.padding(bottom = 8.dp).fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                excerpt,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                HIGHLIGHT_COLORS.forEach { (name, color) ->
+                    Box(
+                        Modifier.size(30.dp)
+                            .background(color, CircleShape)
+                            .clickable { onHighlight(name, draft) },
+                    )
+                }
+                // "None" clears an existing highlight.
                 Box(
-                    Modifier.size(28.dp)
-                        .background(color, CircleShape)
-                        .clickable { onHighlight(name) },
+                    Modifier.size(30.dp)
+                        .border(1.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
+                        .clickable { onHighlight(null, draft) },
                 )
             }
-            TextButton(onClick = onCopy) { Text("Copy") }
+            if (writing) {
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    label = { Text("Note") },
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus),
+                )
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                TextButton(onClick = onCopy) { Text("Copy") }
+                TextButton(onClick = { writing = true }) {
+                    Text(if (note.isBlank()) "Note" else "Edit note")
+                }
+                Spacer(Modifier.weight(1f))
+                if (writing) {
+                    TextButton(onClick = { onHighlight("yellow", draft) }) { Text("Save") }
+                }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
         }
     }
 }
+
+@Composable
+private fun AnnotationsScreen(
+    annotations: List<JSONObject>,
+    onBack: () -> Unit,
+    onOpen: (String) -> Unit,
+    onRemove: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(modifier) {
+        Column {
+            Row(Modifier.padding(8.dp)) {
+                TextButton(onClick = onBack) { Text("‹ Back") }
+                Text(
+                    "Annotations",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(start = 8.dp, top = 8.dp),
+                )
+            }
+            if (annotations.isEmpty()) {
+                Text(
+                    "Select text in the book to highlight it or add a note.",
+                    modifier = Modifier.padding(16.dp),
+                )
+            }
+            LazyColumn(Modifier.fillMaxSize()) {
+                items(annotations.size) { index ->
+                    val item = annotations[index]
+                    val cfi = item.optString("value")
+                    Row(
+                        Modifier.fillMaxWidth().clickable { onOpen(cfi) }.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            Modifier.size(16.dp).background(
+                                HIGHLIGHT_COLORS.toMap()[item.optString("color")]
+                                    ?: MaterialTheme.colorScheme.surfaceVariant,
+                                CircleShape,
+                            ),
+                        )
+                        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                            Text(
+                                item.optString("text"),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            val note = item.optString("note")
+                            if (note.isNotBlank()) {
+                                Text(
+                                    note,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                        TextButton(onClick = { onRemove(cfi) }) { Text("Remove") }
+                    }
+                    HorizontalDivider()
+                }
+            }
+        }
+    }
+}
+
+private fun removeAnnotation(existing: List<JSONObject>, cfi: String): JSONArray =
+    JSONArray(existing.filterNot { it.optString("value") == cfi }.toList())
+
+private fun List<JSONObject>.noteFor(cfi: String): String =
+    firstOrNull { it.optString("value") == cfi }?.optString("note").orEmpty()
 
 @Composable
 private fun ChaptersScreen(
@@ -1163,22 +1313,27 @@ private fun String?.toAnnotations(): List<JSONObject> = runCatching {
     (0 until array.length()).mapNotNull { array.optJSONObject(it) }
 }.getOrDefault(emptyList())
 
+/** Upsert one Foliate-shaped annotation; a null colour drops it. */
 private fun addAnnotation(
     existing: List<JSONObject>,
     cfi: String,
-    color: String,
+    color: String?,
     text: String,
+    note: String = "",
 ): JSONArray {
     // ISO-8601 UTC like Foliate writes; java.time needs API 26, this works on API 24.
     val now = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US)
         .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
         .format(java.util.Date())
+    val previous = existing.firstOrNull { it.optString("value") == cfi }
     val kept = existing.filterNot { it.optString("value") == cfi }
+    if (color == null) return JSONArray(kept.toList())
     val record = JSONObject()
         .put("value", cfi)
         .put("color", color)
         .put("text", text)
-        .put("created", now)
+        .put("note", note)
+        .put("created", previous?.optString("created")?.takeIf(String::isNotBlank) ?: now)
         .put("modified", now)
     return JSONArray((kept + record).toList())
 }
