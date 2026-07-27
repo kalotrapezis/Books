@@ -632,6 +632,7 @@ private fun ReaderScreen(
     var showBookmarks by remember(book.id) { mutableStateOf(false) }
     var showAnnotations by remember(book.id) { mutableStateOf(false) }
     var selectionLower by remember(book.id) { mutableStateOf(true) }
+    var openedAnnotation by remember(book.id) { mutableStateOf<JSONObject?>(null) }
     val readerContext = LocalContext.current
     val bookmarks = remember(book.bookmarks) { book.bookmarks.toCfiList() }
     var selection by remember(book.id) { mutableStateOf<Pair<String, String>?>(null) }
@@ -840,6 +841,9 @@ private fun ReaderScreen(
                     chromeVisible = !chromeVisible
                     selection = null
                 },
+                onAnnotationTapped = { cfi ->
+                    openedAnnotation = annotations.firstOrNull { it.optString("value") == cfi }
+                },
                 onSelected = { cfi, selectedText, lower ->
                     selection = cfi to selectedText
                     selectionLower = lower
@@ -862,6 +866,21 @@ private fun ReaderScreen(
                 modifier = Modifier.fillMaxSize(),
             )
             return@Box
+        }
+
+        openedAnnotation?.let { item ->
+            AnnotationNoteDialog(
+                annotation = item,
+                onRemove = {
+                    val cfi = item.optString("value")
+                    persistenceScope.launch {
+                        dao.updateAnnotations(book.id, removeAnnotation(annotations, cfi).toString())
+                    }
+                    send(JSONObject().put("type", "Unannotate").put("cfi", cfi))
+                    openedAnnotation = null
+                },
+                onDismiss = { openedAnnotation = null },
+            )
         }
 
         pendingImport?.let { merged ->
@@ -1134,6 +1153,42 @@ private fun SelectionPanel(
             }
         }
     }
+}
+
+/** Tapping a highlight shows its note; the X closes it. */
+@Composable
+private fun AnnotationNoteDialog(
+    annotation: JSONObject,
+    onRemove: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val note = annotation.optString("note")
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("✕") } },
+        dismissButton = { TextButton(onClick = onRemove) { Text("Remove") } },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(14.dp).background(
+                        highlightSwatch(annotation.optString("color"))
+                            ?: MaterialTheme.colorScheme.surfaceVariant,
+                        CircleShape,
+                    ),
+                )
+                Text(
+                    annotation.optString("text"),
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(start = 10.dp),
+                )
+            }
+        },
+        text = {
+            Text(note.ifBlank { "No note on this highlight." })
+        },
+    )
 }
 
 /** Foliate shows what a file holds before importing it; so do we. */
@@ -1681,6 +1736,7 @@ private fun ReaderView(
     onBridgeClosed: (JavaScriptReplyProxy?) -> Unit,
     onBookReady: (String, String, String, List<TocEntry>) -> Unit,
     onTapped: () -> Unit,
+    onAnnotationTapped: (String) -> Unit,
     onSelected: (String, String, Boolean) -> Unit,
     onTapPage: (Boolean) -> Unit,
     onRelocated: (String, Double?, Int?, Int?, String, String) -> Unit,
@@ -1771,6 +1827,7 @@ private fun ReaderView(
                             }
                         }
                         "Tapped" -> onTapped()
+                        "AnnotationTapped" -> onAnnotationTapped(data.optString("cfi"))
                         "Selected" -> {
                             val cfi = data.optString("cfi")
                             val selected = data.optString("text").normalizedText()
