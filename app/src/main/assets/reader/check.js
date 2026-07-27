@@ -2,6 +2,7 @@ const status = document.querySelector('#status')
 let CFI
 let selectable = false
 let theme = null
+let typography = null
 
 const send = message => globalThis.booksBridge?.postMessage(JSON.stringify(message))
 const text = value => typeof value === 'string'
@@ -47,6 +48,11 @@ try {
         const view = document.createElement('foliate-view')
         document.body.append(view)
         await view.open(book)
+        // foliate slides the columns over 300 ms when this attribute is present.
+        view.renderer.setAttribute('animated', '')
+        view.renderer.setAttribute('gap', '7%')
+        view.renderer.setAttribute('max-inline-size', '40em')
+        view.renderer.setAttribute('max-column-count', '2')
         setSelectable(false)
         send({
             type: 'BookReady',
@@ -56,20 +62,37 @@ try {
             toc: flattenToc(book.toc),
         })
         document.body.dataset.readerStage = 'view-open'
-        // A tap anywhere on the page toggles the native UI, except on links and
-        // when the tap ends a text selection.
+        // A tap anywhere on the page toggles the native UI; a horizontal drag
+        // turns the page. Links and text selections are left alone.
         view.addEventListener('load', ({ detail }) => {
-            detail?.doc?.addEventListener('click', event => {
+            const doc = detail?.doc
+            if (!doc) return
+            let start = null
+            let swiped = false
+            doc.addEventListener('touchstart', event => {
+                const touch = event.touches[0]
+                start = touch ? { x: touch.clientX, y: touch.clientY } : null
+                swiped = false
+            }, { passive: true })
+            doc.addEventListener('touchend', event => {
+                const touch = event.changedTouches[0]
+                if (!start || !touch) return
+                const dx = touch.clientX - start.x
+                const dy = touch.clientY - start.y
+                start = null
+                if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return
+                if (!doc.defaultView?.getSelection()?.isCollapsed) return
+                swiped = true
+                send({ type: dx > 0 ? 'TappedPrevious' : 'TappedNext' })
+            }, { passive: true })
+            doc.addEventListener('click', event => {
+                if (swiped) {
+                    swiped = false
+                    return
+                }
                 if (event.target?.closest?.('a')) return
-                if (!detail.doc.defaultView?.getSelection()?.isCollapsed) return
-                // Screen coordinates, not document ones: with two columns the page
-                // document is wider than the screen, so a middle tap reads as an edge.
-                const width = globalThis.innerWidth || 1
-                const zone = (event.screenX - (globalThis.screenX ?? 0)) / width
-                const paginated = view.renderer.getAttribute('flow') !== 'scrolled'
-                if (paginated && zone < 0.25) send({ type: 'TappedPrevious' })
-                else if (paginated && zone > 0.75) send({ type: 'TappedNext' })
-                else send({ type: 'Tapped' })
+                if (!doc.defaultView?.getSelection()?.isCollapsed) return
+                send({ type: 'Tapped' })
             })
         })
         view.addEventListener('relocate', ({ detail }) => {
@@ -134,10 +157,25 @@ try {
                 return
             }
             if (command.type === 'SetTheme'
-                && Object.keys(command).length === 3
+                && Object.keys(command).length === 4
                 && /^#[0-9a-f]{6}$/i.test(command.foreground ?? '')
-                && /^#[0-9a-f]{6}$/i.test(command.background ?? '')) {
-                setTheme(command.foreground, command.background)
+                && /^#[0-9a-f]{6}$/i.test(command.background ?? '')
+                && /^#[0-9a-f]{6}$/i.test(command.link ?? '')) {
+                setTheme(command.foreground, command.background, command.link)
+                return
+            }
+            if (command.type === 'SetTypography'
+                && Object.keys(command).length === 5
+                && Number.isFinite(command.fontScale)
+                && Number.isFinite(command.lineHeight)
+                && Number.isFinite(command.margin)
+                && ['book', 'serif', 'sans'].includes(command.font)) {
+                setTypography({
+                    fontScale: Math.min(220, Math.max(70, command.fontScale)),
+                    lineHeight: Math.min(2.4, Math.max(1, command.lineHeight)),
+                    margin: Math.min(96, Math.max(0, command.margin)),
+                    font: command.font,
+                })
                 return
             }
             if (command.type === 'SetSelectable'
@@ -226,10 +264,25 @@ function setSelectable(enabled) {
     applyStyles()
 }
 
-function setTheme(foreground, background) {
-    theme = { foreground, background }
+function setTheme(foreground, background, link) {
+    theme = { foreground, background, link }
     document.body.style.background = background
     applyStyles()
+}
+
+/** Font size, line height, margins and family, all optional overrides. */
+function setTypography(settings) {
+    typography = settings
+    const view = document.querySelector('foliate-view')
+    if (view?.renderer) {
+        view.renderer.setAttribute('margin', `${settings.margin}px`)
+    }
+    applyStyles()
+}
+
+const FONT_STACKS = {
+    serif: 'Georgia, "Noto Serif", serif',
+    sans: '"Noto Sans", system-ui, sans-serif',
 }
 
 function applyStyles() {
@@ -238,6 +291,7 @@ function applyStyles() {
         + ' ::-webkit-scrollbar { width: 0 !important; height: 0 !important }',
         selectable ? '' : '*, *::before, *::after { -webkit-user-select: none !important;'
             + ' user-select: none !important }',
+        theme ? `a, a:link, a:visited { color: ${theme.link} !important }` : '',
         theme ? `html, body { background: ${theme.background} !important;`
             + ` color: ${theme.foreground} !important }`
             + ` p, div, span, li, td, h1, h2, h3, h4, h5, h6, blockquote`

@@ -17,10 +17,17 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import android.graphics.BitmapFactory
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -104,22 +111,42 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 private const val READER_ORIGIN = "appassets.androidplatform.net"
-private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=33"
+private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=37"
 private const val EPUB_MIME_TYPE = "application/epub+zip"
 private const val PREFERENCES_NAME = "reader-state"
 private const val BOOK_URI_KEY = "book-uri"
 private const val LAST_CFI_KEY = "last-cfi"
 private const val SCROLLED_KEY = "scrolled"
 private const val DARK_KEY = "dark"
+private const val FONT_SCALE_KEY = "font-scale"
+private const val LINE_HEIGHT_KEY = "line-height"
+private const val MARGIN_KEY = "margin"
+private const val FONT_KEY = "font"
+
+/** Reader typography, shared by every book. */
+private data class Typography(
+    val fontScale: Int = 100,
+    val lineHeight: Float = 1.5f,
+    val margin: Int = 0,
+    val font: String = "book",
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("type", "SetTypography")
+        .put("fontScale", fontScale)
+        .put("lineHeight", lineHeight.toDouble())
+        .put("margin", margin)
+        .put("font", font)
+}
 
 /** Two low-glare reading themes: grey on white, and white on grey. */
 private enum class ReaderTheme(
     val label: String,
     val background: Color,
     val foreground: Color,
+    val link: Color,
 ) {
-    GREY_ON_WHITE("Grey on white", Color(0xFFFAFAFA), Color(0xFF3A3A3A)),
-    WHITE_ON_GREY("White on grey", Color(0xFF303234), Color(0xFFE4E4E4));
+    GREY_ON_WHITE("Grey on white", Color(0xFFFAFAFA), Color(0xFF3A3A3A), Color(0xFF1A5FB4)),
+    WHITE_ON_GREY("White on grey", Color(0xFF303234), Color(0xFFE4E4E4), Color(0xFF8AB4F8));
 
     fun hex(color: Color) = String.format("#%06X", color.toArgb() and 0xFFFFFF)
 
@@ -186,6 +213,25 @@ private fun BooksApp() {
             if (preferences.getBoolean(DARK_KEY, false)) ReaderTheme.WHITE_ON_GREY
             else ReaderTheme.GREY_ON_WHITE
         )
+    }
+    var typography by remember {
+        mutableStateOf(
+            Typography(
+                fontScale = preferences.getInt(FONT_SCALE_KEY, 100),
+                lineHeight = preferences.getFloat(LINE_HEIGHT_KEY, 1.5f),
+                margin = preferences.getInt(MARGIN_KEY, 0),
+                font = preferences.getString(FONT_KEY, "book") ?: "book",
+            )
+        )
+    }
+    val setTypography: (Typography) -> Unit = {
+        typography = it
+        preferences.edit()
+            .putInt(FONT_SCALE_KEY, it.fontScale)
+            .putFloat(LINE_HEIGHT_KEY, it.lineHeight)
+            .putInt(MARGIN_KEY, it.margin)
+            .putString(FONT_KEY, it.font)
+            .apply()
     }
     val setTheme: (ReaderTheme) -> Unit = {
         theme = it
@@ -263,6 +309,8 @@ private fun BooksApp() {
                             onSetScrolled = setScrolled,
                             theme = theme,
                             onSetTheme = setTheme,
+                            typography = typography,
+                            onSetTypography = setTypography,
                             onAddBook = launchPicker,
                             onSelectBook = selectBook,
                             modifier = Modifier.width(280.dp).fillMaxHeight(),
@@ -276,6 +324,7 @@ private fun BooksApp() {
                                 persistenceScope = scope,
                                 scrolled = scrolled,
                                 theme = theme,
+                                typography = typography,
                                 onBack = null,
                                 modifier = Modifier.weight(1f).fillMaxHeight(),
                             )
@@ -290,6 +339,8 @@ private fun BooksApp() {
                         onSetScrolled = setScrolled,
                         theme = theme,
                         onSetTheme = setTheme,
+                        typography = typography,
+                        onSetTypography = setTypography,
                         onAddBook = launchPicker,
                         onSelectBook = selectBook,
                         modifier = Modifier.fillMaxSize(),
@@ -301,6 +352,7 @@ private fun BooksApp() {
                         persistenceScope = scope,
                         scrolled = scrolled,
                         theme = theme,
+                        typography = typography,
                         onBack = { selectedBookId = null },
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -319,6 +371,8 @@ private fun LibraryPane(
     onSetScrolled: (Boolean) -> Unit,
     theme: ReaderTheme,
     onSetTheme: (ReaderTheme) -> Unit,
+    typography: Typography,
+    onSetTypography: (Typography) -> Unit,
     onAddBook: () -> Unit,
     onSelectBook: (BookEntity) -> Unit,
     modifier: Modifier = Modifier,
@@ -330,6 +384,8 @@ private fun LibraryPane(
             onSetScrolled = onSetScrolled,
             theme = theme,
             onSetTheme = onSetTheme,
+            typography = typography,
+            onSetTypography = onSetTypography,
             onDismiss = { showSettings = false },
         )
     }
@@ -416,6 +472,8 @@ private fun SettingsDialog(
     onSetScrolled: (Boolean) -> Unit,
     theme: ReaderTheme,
     onSetTheme: (ReaderTheme) -> Unit,
+    typography: Typography,
+    onSetTypography: (Typography) -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -423,13 +481,47 @@ private fun SettingsDialog(
         confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
         title = { Text("Settings") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 Row(
                     Modifier.fillMaxWidth().clickable { onSetScrolled(!scrolled) },
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Text("Scrolled reading", modifier = Modifier.padding(top = 12.dp))
                     Switch(checked = scrolled, onCheckedChange = onSetScrolled)
+                }
+                SettingSlider(
+                    label = "Text size",
+                    value = typography.fontScale.toFloat(),
+                    range = 70f..200f,
+                    display = "${typography.fontScale}%",
+                ) { onSetTypography(typography.copy(fontScale = it.toInt())) }
+                SettingSlider(
+                    label = "Line spacing",
+                    value = typography.lineHeight,
+                    range = 1.1f..2.2f,
+                    display = String.format("%.1f", typography.lineHeight),
+                ) { onSetTypography(typography.copy(lineHeight = it)) }
+                SettingSlider(
+                    label = "Margins",
+                    value = typography.margin.toFloat(),
+                    range = 0f..96f,
+                    display = "${typography.margin}",
+                ) { onSetTypography(typography.copy(margin = it.toInt())) }
+                Text("Font", style = MaterialTheme.typography.titleSmall)
+                Row {
+                    listOf("book" to "Book's own", "serif" to "Serif", "sans" to "Sans")
+                        .forEach { (key, label) ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(
+                                    selected = typography.font == key,
+                                    onClick = { onSetTypography(typography.copy(font = key)) },
+                                )
+                                Text(label, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
                 }
                 Text("Theme", style = MaterialTheme.typography.titleSmall)
                 ReaderTheme.entries.forEach { option ->
@@ -447,6 +539,23 @@ private fun SettingsDialog(
 }
 
 @Composable
+private fun SettingSlider(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    display: String,
+    onChange: (Float) -> Unit,
+) {
+    Column {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(label, style = MaterialTheme.typography.titleSmall)
+            Text(display, style = MaterialTheme.typography.bodySmall)
+        }
+        Slider(value = value, onValueChange = onChange, valueRange = range)
+    }
+}
+
+@Composable
 private fun EmptyReader(modifier: Modifier = Modifier) {
     Column(modifier.padding(24.dp), verticalArrangement = Arrangement.Center) {
         Text("Select a book from your library.", style = MaterialTheme.typography.titleLarge)
@@ -460,6 +569,7 @@ private fun ReaderScreen(
     persistenceScope: CoroutineScope,
     scrolled: Boolean,
     theme: ReaderTheme,
+    typography: Typography,
     onBack: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
@@ -505,9 +615,13 @@ private fun ReaderScreen(
                 JSONObject()
                     .put("type", "SetTheme")
                     .put("foreground", theme.hex(theme.foreground))
-                    .put("background", theme.hex(theme.background)),
+                    .put("background", theme.hex(theme.background))
+                    .put("link", theme.hex(theme.link)),
             )
         }
+    }
+    LaunchedEffect(readerReady, typography) {
+        if (readerReady) send(typography.toJson())
     }
     LaunchedEffect(readerReady, selectable) {
         if (readerReady) {
@@ -597,7 +711,12 @@ private fun ReaderScreen(
             )
         }
 
-        if (chromeVisible) {
+        AnimatedVisibility(
+            visible = chromeVisible,
+            enter = fadeIn() + slideInVertically { -it },
+            exit = fadeOut() + slideOutVertically { -it },
+            modifier = Modifier.align(Alignment.TopCenter),
+        ) {
             ReaderTopBar(
                 book = book,
                 chapter = chapter,
@@ -612,8 +731,25 @@ private fun ReaderScreen(
                     }
                 },
                 onShowBookmarks = { showBookmarks = true },
-                modifier = Modifier.align(Alignment.TopCenter),
             )
+        }
+        AnimatedVisibility(
+            visible = chromeVisible,
+            enter = fadeIn() + slideInVertically { it },
+            exit = fadeOut() + slideOutVertically { it },
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
+          Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            ChromeIsland {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { showChapters = true }, enabled = toc.isNotEmpty()) {
+                        Text("Chapters")
+                    }
+                    TextButton(onClick = { selectable = !selectable }) {
+                        Text(if (selectable) "Reading" else "Annotate")
+                    }
+                }
+            }
             if (scrolled) {
                 ScrubHandle(
                     progress = progress,
@@ -622,7 +758,6 @@ private fun ReaderScreen(
                     onSeek = {
                         send(JSONObject().put("type", "GoToFraction").put("fraction", it))
                     },
-                    modifier = Modifier.align(Alignment.CenterStart),
                 )
             } else {
                 ReaderControls(
@@ -636,22 +771,9 @@ private fun ReaderScreen(
                     onSeek = {
                         send(JSONObject().put("type", "GoToFraction").put("fraction", it))
                     },
-                    modifier = Modifier.align(Alignment.BottomCenter),
                 )
             }
-            ChromeIsland(
-                Modifier.align(Alignment.BottomCenter)
-                    .padding(bottom = if (scrolled) 16.dp else 132.dp),
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(onClick = { showChapters = true }, enabled = toc.isNotEmpty()) {
-                        Text("Chapters")
-                    }
-                    TextButton(onClick = { selectable = !selectable }) {
-                        Text(if (selectable) "Reading" else "Annotate")
-                    }
-                }
-            }
+          }
         }
     }
 }
