@@ -85,9 +85,17 @@ try {
                 const dx = touch.clientX - start.x
                 const dy = touch.clientY - start.y
                 start = null
-                // Scrolled mode owns vertical dragging; a page-turn swipe there just
-                // fights the scroll and throws the reader back and forth.
-                if (view.renderer.getAttribute('flow') === 'scrolled') return
+                // Scrolled mode owns vertical dragging, but a section ends where its
+                // document ends: one more flick past the edge loads the next one.
+                if (view.renderer.getAttribute('flow') === 'scrolled') {
+                    if (Math.abs(dy) < 60 || Math.abs(dy) < Math.abs(dx)) return
+                    const renderer = view.renderer
+                    const atBottom = renderer.viewSize - renderer.end <= 2
+                    const atTop = renderer.start <= 2
+                    if (dy < 0 && atBottom) send({ type: 'TappedNext' })
+                    else if (dy > 0 && atTop) send({ type: 'TappedPrevious' })
+                    return
+                }
                 if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return
                 if (!doc.defaultView?.getSelection()?.isCollapsed) return
                 swiped = true
