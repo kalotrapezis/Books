@@ -971,16 +971,7 @@ private fun ReaderScreen(
                     TextButton(onClick = { showAnnotations = true }) { Text("Annotations") }
                 }
             }
-            if (scrolled) {
-                ScrubHandle(
-                    progress = progress,
-                    pages = pages,
-                    enabled = bridge != null && readerReady,
-                    onSeek = {
-                        send(JSONObject().put("type", "GoToFraction").put("fraction", it))
-                    },
-                )
-            } else {
+            if (!scrolled) {
                 ReaderControls(
                     progress = progress,
                     printPage = printPage,
@@ -995,6 +986,21 @@ private fun ReaderScreen(
                 )
             }
           }
+        }
+
+        // Scrolled mode scrubs from the side, so the toolbar keeps the bottom.
+        AnimatedVisibility(
+            visible = chromeVisible && selection == null && scrolled,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.CenterStart),
+        ) {
+            ScrubHandle(
+                progress = progress,
+                pages = pages,
+                enabled = bridge != null && readerReady,
+                onSeek = { send(JSONObject().put("type", "GoToFraction").put("fraction", it)) },
+            )
         }
     }
 }
