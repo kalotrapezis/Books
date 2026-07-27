@@ -15,3 +15,6 @@ local.properties
 # OS/editor leftovers.
 .DS_Store
 *~
+
+# Locally built APKs for testing.
+/dist/
