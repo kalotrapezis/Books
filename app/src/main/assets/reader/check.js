@@ -85,6 +85,9 @@ try {
                 const dx = touch.clientX - start.x
                 const dy = touch.clientY - start.y
                 start = null
+                // Scrolled mode owns vertical dragging; a page-turn swipe there just
+                // fights the scroll and throws the reader back and forth.
+                if (view.renderer.getAttribute('flow') === 'scrolled') return
                 if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return
                 if (!doc.defaultView?.getSelection()?.isCollapsed) return
                 swiped = true
