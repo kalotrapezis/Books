@@ -79,6 +79,28 @@ class FoliateJsonTest {
         assertFalse(merged.identifierMatches)
     }
 
+    @Test fun rendersTheOtherFoliateFormats() {
+        val annotations = listOf(
+            JSONObject(
+                """{"value":"epubcfi(/6/4!/4/2:1)","color":"lime","text":"a < b","note":"why"}"""
+            )
+        )
+        val html = AnnotationExport.render(ExportFormat.HTML, "Book", annotations) { "" }
+        assertTrue(html.contains("<h1>Annotations for \u201CBook\u201D</h1>"))
+        assertTrue(html.contains("a &lt; b"))
+        assertTrue(html.contains("border-color: lime"))
+        assertTrue(html.contains("<p class=\"note\">why</p>"))
+
+        val md = AnnotationExport.render(ExportFormat.MARKDOWN, "Book", annotations) { "" }
+        assertTrue(md.startsWith("# Annotations for \u201CBook\u201D"))
+        assertTrue(md.contains("**lime** - `epubcfi(/6/4!/4/2:1)`"))
+        assertTrue(md.contains("> a \\< b"))
+
+        val org = AnnotationExport.render(ExportFormat.ORG, "Book", annotations) { "" }
+        assertTrue(org.contains("#+begin_quote"))
+        assertTrue(org.contains("1 Annotation"))
+    }
+
     @Test fun exportAfterImportStillCarriesTheUnknownFields() {
         val merged = FoliateJson.merge(
             book(),

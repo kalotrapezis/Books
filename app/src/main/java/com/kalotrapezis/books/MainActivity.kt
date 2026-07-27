@@ -118,6 +118,8 @@ import com.kalotrapezis.books.data.BookEntity
 import com.kalotrapezis.books.data.BookIdentifiers
 import com.kalotrapezis.books.data.BooksDatabase
 import com.kalotrapezis.books.data.CoverExtractor
+import com.kalotrapezis.books.data.AnnotationExport
+import com.kalotrapezis.books.data.ExportFormat
 import com.kalotrapezis.books.data.FoliateJson
 import com.kalotrapezis.books.data.toAnnotations
 import java.io.ByteArrayInputStream
@@ -654,20 +656,25 @@ private fun ReaderScreen(
         readerContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     }
     var pendingImport by remember(book.id) { mutableStateOf<FoliateJson.Merged?>(null) }
+    var exportFormat by remember(book.id) { mutableStateOf(ExportFormat.JSON) }
+    var choosingFormat by remember(book.id) { mutableStateOf(false) }
     val exportFile = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/json"),
+        ActivityResultContracts.CreateDocument("*/*"),
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         persistenceScope.launch {
             transferNotice = runCatching {
                 withContext(Dispatchers.IO) {
+                    val text = AnnotationExport.render(
+                        format = exportFormat,
+                        title = book.title,
+                        annotations = annotations,
+                    ) { FoliateJson.export(book, book.foliateExtras, page, pages) }
                     readerContext.contentResolver.openOutputStream(uri)?.use { out ->
-                        out.write(
-                            FoliateJson.export(book, book.foliateExtras, page, pages).toByteArray(),
-                        )
+                        out.write(text.toByteArray())
                     } ?: error("Could not write the file")
                 }
-                "Exported Foliate JSON."
+                "Exported ${exportFormat.label}."
             }.getOrElse { "Export failed: ${it.message ?: "unknown error"}" }
         }
     }
@@ -893,6 +900,32 @@ private fun ReaderScreen(
             AnnotationNoteDialog(annotation = item, onDismiss = { openedAnnotation = null })
         }
 
+        if (choosingFormat) {
+            AlertDialog(
+                onDismissRequest = { choosingFormat = false },
+                confirmButton = {
+                    TextButton(onClick = { choosingFormat = false }) { Text("Cancel") }
+                },
+                title = { Text("Export as") },
+                text = {
+                    Column {
+                        ExportFormat.entries.forEach { format ->
+                            Row(
+                                Modifier.fillMaxWidth().clickable {
+                                    exportFormat = format
+                                    choosingFormat = false
+                                    exportFile.launch(exportFileName(book, format))
+                                }.padding(vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(format.label)
+                            }
+                        }
+                    }
+                },
+            )
+        }
+
         pendingImport?.let { merged ->
             ImportPreviewDialog(
                 merged = merged,
@@ -908,7 +941,7 @@ private fun ReaderScreen(
             AnnotationsScreen(
                 annotations = annotations,
                 onBack = { showAnnotations = false },
-                onExport = { exportFile.launch(foliateFileName(book)) },
+                onExport = { choosingFormat = true },
                 onImport = { importFile.launch(arrayOf("application/json", "text/plain", "*/*")) },
                 onSync = {
                     val target = syncUri
@@ -1333,7 +1366,10 @@ private fun AnnotationsScreen(
     }
 }
 
-/** `Title-Books-Export-2026-07-27-1215.json`: sorts by book, then by when. */
+/** `Title-Books-Export-2026-07-27-1215.md`: sorts by book, then by when. */
+private fun exportFileName(book: BookEntity, format: ExportFormat): String =
+    foliateFileName(book).removeSuffix(".json") + "." + format.extension
+
 private fun foliateFileName(book: BookEntity): String {
     val title = book.title.ifBlank { "book" }
         .replace(Regex("[/\\\\:*?\"<>|]"), "")
