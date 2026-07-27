@@ -1169,7 +1169,10 @@ private fun addAnnotation(
     color: String,
     text: String,
 ): JSONArray {
-    val now = java.time.Instant.now().toString()
+    // ISO-8601 UTC like Foliate writes; java.time needs API 26, this works on API 24.
+    val now = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US)
+        .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+        .format(java.util.Date())
     val kept = existing.filterNot { it.optString("value") == cfi }
     val record = JSONObject()
         .put("value", cfi)
