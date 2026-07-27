@@ -182,11 +182,17 @@ try {
                 return
             }
             if (command.type === 'SetTheme'
-                && Object.keys(command).length === 4
+                && Object.keys(command).length === 5
                 && /^#[0-9a-f]{6}$/i.test(command.foreground ?? '')
                 && /^#[0-9a-f]{6}$/i.test(command.background ?? '')
-                && /^#[0-9a-f]{6}$/i.test(command.link ?? '')) {
-                setTheme(command.foreground, command.background, command.link)
+                && /^#[0-9a-f]{6}$/i.test(command.link ?? '')
+                && typeof command.keepColors === 'boolean') {
+                setTheme(
+                    command.foreground,
+                    command.background,
+                    command.link,
+                    command.keepColors,
+                )
                 return
             }
             if (command.type === 'SetTypography'
@@ -315,8 +321,8 @@ function setSelectable(enabled) {
     applyStyles()
 }
 
-function setTheme(foreground, background, link) {
-    theme = { foreground, background, link }
+function setTheme(foreground, background, link, keepColors) {
+    theme = { foreground, background, link, keepColors }
     document.body.style.background = background
     applyStyles()
 }
@@ -336,6 +342,30 @@ const FONT_STACKS = {
     sans: '"Noto Sans", system-ui, sans-serif',
 }
 
+const isDark = hex => {
+    const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16))
+    return (r * 0.299 + g * 0.587 + b * 0.114) < 128
+}
+
+const invert = hex => '#' + [1, 3, 5]
+    .map(i => (255 - parseInt(hex.slice(i, i + 2), 16)).toString(16).padStart(2, '0'))
+    .join('')
+
+/**
+ * Grayscale keeps the book's own distinctions as different greys. On a dark theme the
+ * page is inverted too, so the background is set to the inverse of the theme colour and
+ * lands back on it; images are inverted a second time to come out unharmed.
+ */
+function greyFilterCss(theme) {
+    const dark = isDark(theme.background)
+    return `html { background: ${dark ? invert(theme.background) : theme.background}`
+        + ` !important; filter: grayscale(1)${dark ? ' invert(1)' : ''} }`
+        + ` body { background: transparent !important }`
+        + (dark
+            ? ' img, picture, video, canvas, svg { filter: invert(1) grayscale(0) !important }'
+            : '')
+}
+
 function applyStyles() {
     const css = [
         '* { scrollbar-width: none !important }'
@@ -343,10 +373,14 @@ function applyStyles() {
         selectable ? '' : '*, *::before, *::after { -webkit-user-select: none !important;'
             + ' user-select: none !important }',
         theme ? `a, a:link, a:visited { color: ${theme.link} !important }` : '',
-        theme ? `html, body { background: ${theme.background} !important;`
-            + ` color: ${theme.foreground} !important }`
-            + ` p, div, span, li, td, h1, h2, h3, h4, h5, h6, blockquote`
-            + ` { color: ${theme.foreground} !important }` : '',
+        // Two ways to theme the page: flatten every colour to the theme's ink, or keep
+        // the book's own colours and let a filter turn them into greys of the theme.
+        !theme ? ''
+            : theme.keepColors ? greyFilterCss(theme)
+            : `html, body { background: ${theme.background} !important;`
+                + ` color: ${theme.foreground} !important }`
+                + ` p, div, span, li, td, h1, h2, h3, h4, h5, h6, blockquote`
+                + ` { color: ${theme.foreground} !important }`,
     ].join('\n')
     document.querySelector('foliate-view')?.renderer?.setStyles?.(css)
 }

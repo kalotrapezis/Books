@@ -125,7 +125,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 private const val READER_ORIGIN = "appassets.androidplatform.net"
-private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=40"
+private const val READER_URL = "https://$READER_ORIGIN/assets/reader/index.html?v=41"
 private const val EPUB_MIME_TYPE = "application/epub+zip"
 private const val PREFERENCES_NAME = "reader-state"
 private const val BOOK_URI_KEY = "book-uri"
@@ -137,6 +137,7 @@ private const val LINE_HEIGHT_KEY = "line-height"
 private const val MARGIN_KEY = "margin"
 private const val FONT_KEY = "font"
 private const val SYNC_FILE_PREFIX = "sync-file-"
+private const val KEEP_COLORS_KEY = "keep-colors"
 
 /** Reader typography, shared by every book. */
 private data class Typography(
@@ -248,6 +249,11 @@ private fun BooksApp() {
             .putString(FONT_KEY, it.font)
             .apply()
     }
+    var keepColors by remember { mutableStateOf(preferences.getBoolean(KEEP_COLORS_KEY, true)) }
+    val setKeepColors: (Boolean) -> Unit = {
+        keepColors = it
+        preferences.edit().putBoolean(KEEP_COLORS_KEY, it).apply()
+    }
     val setTheme: (ReaderTheme) -> Unit = {
         theme = it
         preferences.edit().putBoolean(DARK_KEY, it == ReaderTheme.WHITE_ON_GREY).apply()
@@ -324,6 +330,8 @@ private fun BooksApp() {
                             onSetScrolled = setScrolled,
                             theme = theme,
                             onSetTheme = setTheme,
+                            keepColors = keepColors,
+                            onSetKeepColors = setKeepColors,
                             typography = typography,
                             onSetTypography = setTypography,
                             onAddBook = launchPicker,
@@ -339,6 +347,7 @@ private fun BooksApp() {
                                 persistenceScope = scope,
                                 scrolled = scrolled,
                                 theme = theme,
+                                keepColors = keepColors,
                                 typography = typography,
                                 onBack = null,
                                 modifier = Modifier.weight(1f).fillMaxHeight(),
@@ -354,6 +363,8 @@ private fun BooksApp() {
                         onSetScrolled = setScrolled,
                         theme = theme,
                         onSetTheme = setTheme,
+                        keepColors = keepColors,
+                        onSetKeepColors = setKeepColors,
                         typography = typography,
                         onSetTypography = setTypography,
                         onAddBook = launchPicker,
@@ -367,6 +378,7 @@ private fun BooksApp() {
                         persistenceScope = scope,
                         scrolled = scrolled,
                         theme = theme,
+                        keepColors = keepColors,
                         typography = typography,
                         onBack = { selectedBookId = null },
                         modifier = Modifier.fillMaxSize(),
@@ -386,6 +398,8 @@ private fun LibraryPane(
     onSetScrolled: (Boolean) -> Unit,
     theme: ReaderTheme,
     onSetTheme: (ReaderTheme) -> Unit,
+    keepColors: Boolean,
+    onSetKeepColors: (Boolean) -> Unit,
     typography: Typography,
     onSetTypography: (Typography) -> Unit,
     onAddBook: () -> Unit,
@@ -399,6 +413,8 @@ private fun LibraryPane(
             onSetScrolled = onSetScrolled,
             theme = theme,
             onSetTheme = onSetTheme,
+            keepColors = keepColors,
+            onSetKeepColors = onSetKeepColors,
             typography = typography,
             onSetTypography = onSetTypography,
             onDismiss = { showSettings = false },
@@ -487,6 +503,8 @@ private fun SettingsDialog(
     onSetScrolled: (Boolean) -> Unit,
     theme: ReaderTheme,
     onSetTheme: (ReaderTheme) -> Unit,
+    keepColors: Boolean,
+    onSetKeepColors: (Boolean) -> Unit,
     typography: Typography,
     onSetTypography: (Typography) -> Unit,
     onDismiss: () -> Unit,
@@ -538,6 +556,16 @@ private fun SettingsDialog(
                             }
                         }
                 }
+                Row(
+                    Modifier.fillMaxWidth().clickable { onSetKeepColors(!keepColors) },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        "Book colours as greys",
+                        modifier = Modifier.padding(top = 12.dp),
+                    )
+                    Switch(checked = keepColors, onCheckedChange = onSetKeepColors)
+                }
                 Text("Theme", style = MaterialTheme.typography.titleSmall)
                 ReaderTheme.entries.forEach { option ->
                     Row(
@@ -584,6 +612,7 @@ private fun ReaderScreen(
     persistenceScope: CoroutineScope,
     scrolled: Boolean,
     theme: ReaderTheme,
+    keepColors: Boolean,
     typography: Typography,
     onBack: (() -> Unit)?,
     modifier: Modifier = Modifier,
@@ -736,14 +765,15 @@ private fun ReaderScreen(
         enabled = !showChapters && !showAnnotations && selection == null && onBack != null,
     ) { onBack?.invoke() }
 
-    LaunchedEffect(readerReady, theme) {
+    LaunchedEffect(readerReady, theme, keepColors) {
         if (readerReady) {
             send(
                 JSONObject()
                     .put("type", "SetTheme")
                     .put("foreground", theme.hex(theme.foreground))
                     .put("background", theme.hex(theme.background))
-                    .put("link", theme.hex(theme.link)),
+                    .put("link", theme.hex(theme.link))
+                    .put("keepColors", keepColors),
             )
         }
     }
