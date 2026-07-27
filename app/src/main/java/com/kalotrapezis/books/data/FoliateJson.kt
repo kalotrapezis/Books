@@ -8,15 +8,21 @@ import org.json.JSONObject
  * untouched, so a round trip never drops anything Foliate wrote.
  */
 object FoliateJson {
-    fun export(book: BookEntity, extras: String?): String {
+    fun export(book: BookEntity, extras: String?, page: Int? = null, pages: Int? = null): String {
         val root = extras?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject()
         val metadata = root.optJSONObject("metadata") ?: JSONObject()
         book.metadataIdentifier?.let { metadata.put("identifier", it) }
-        if (book.title.isNotBlank()) metadata.put("title", book.title)
-        if (book.author.isNotBlank()) metadata.put("author", book.author)
+        if (!metadata.has("title") && book.title.isNotBlank()) metadata.put("title", book.title)
+        // Foliate writes author as an object; never flatten one it already wrote.
+        if (!metadata.has("author") && book.author.isNotBlank()) {
+            metadata.put("author", JSONObject().put("name", book.author).put("role", "aut"))
+        }
         root.put("metadata", metadata)
         root.put("lastLocation", book.lastCfi ?: JSONObject.NULL)
-        book.progressFraction?.let { root.put("progress", JSONArray(listOf(it))) }
+        // Foliate's progress is [current location, total locations], not a fraction.
+        if (page != null && pages != null && pages > 0) {
+            root.put("progress", JSONArray(listOf(page, pages)))
+        }
         root.put("bookmarks", JSONArray(book.bookmarks ?: "[]"))
         root.put("annotations", JSONArray(book.annotations ?: "[]"))
         return root.toString(2)

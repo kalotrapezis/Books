@@ -29,12 +29,15 @@ class FoliateJsonTest {
             FoliateJson.export(
                 book(annotations = """[{"value":"epubcfi(/6/4!/4/2:1)","color":"yellow"}]"""),
                 extras = """{"metadata":{"unknownField":"keep me"}}""",
+                page = 1110,
+                pages = 4721,
             )
         )
         assertEquals("urn:uuid:1", json.getJSONObject("metadata").getString("identifier"))
         assertEquals("keep me", json.getJSONObject("metadata").getString("unknownField"))
         assertEquals("epubcfi(/6/2!/4/2:0)", json.getString("lastLocation"))
-        assertEquals(0.5, json.getJSONArray("progress").getDouble(0), 1e-9)
+        assertEquals(1110, json.getJSONArray("progress").getInt(0))
+        assertEquals(4721, json.getJSONArray("progress").getInt(1))
         assertEquals(1, json.getJSONArray("annotations").length())
     }
 

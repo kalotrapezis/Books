@@ -645,7 +645,8 @@ private fun ReaderScreen(
                     val updated = dao.findByUri(book.uri) ?: book
                     readerContext.contentResolver.openOutputStream(target.uri, "wt")?.use { out ->
                         out.write(
-                            FoliateJson.export(updated, updated.foliateExtras).toByteArray(),
+                            FoliateJson.export(updated, updated.foliateExtras, page, pages)
+                                .toByteArray(),
                         )
                     } ?: error("Could not write the file")
                     merged
@@ -684,11 +685,28 @@ private fun ReaderScreen(
             transferNotice = runCatching {
                 withContext(Dispatchers.IO) {
                     readerContext.contentResolver.openOutputStream(uri)?.use { out ->
-                        out.write(FoliateJson.export(book, book.foliateExtras).toByteArray())
+                        out.write(
+                            FoliateJson.export(book, book.foliateExtras, page, pages).toByteArray(),
+                        )
                     } ?: error("Could not write the file")
                 }
                 "Exported Foliate JSON."
             }.getOrElse { "Export failed: ${it.message ?: "unknown error"}" }
+        }
+    }
+    var pendingImport by remember(book.id) { mutableStateOf<FoliateJson.Merged?>(null) }
+    val applyMerge: (FoliateJson.Merged) -> Unit = { merged ->
+        persistenceScope.launch {
+            dao.applyImport(book.id, merged.annotations, merged.bookmarks, merged.extras)
+            merged.annotations.toAnnotations().forEach {
+                send(
+                    JSONObject().put("type", "Annotate")
+                        .put("cfi", it.optString("value"))
+                        .put("color", it.optString("color").ifBlank { "yellow" }),
+                )
+            }
+            transferNotice = if (merged.identifierMatches) "Imported Foliate data."
+            else "Imported, but this file is from a different book identifier."
         }
     }
     val importFile = rememberLauncherForActivityResult(
@@ -696,24 +714,15 @@ private fun ReaderScreen(
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         persistenceScope.launch {
-            transferNotice = runCatching {
-                val merged = withContext(Dispatchers.IO) {
+            runCatching {
+                withContext(Dispatchers.IO) {
                     val text = readerContext.contentResolver.openInputStream(uri)
                         ?.use { it.readBytes().decodeToString() }
                         ?: error("Could not read the file")
                     FoliateJson.merge(book, text)
                 }
-                dao.applyImport(book.id, merged.annotations, merged.bookmarks, merged.extras)
-                merged.annotations.toAnnotations().forEach {
-                    send(
-                        JSONObject().put("type", "Annotate")
-                            .put("cfi", it.optString("value"))
-                            .put("color", it.optString("color").ifBlank { "yellow" }),
-                    )
-                }
-                if (merged.identifierMatches) "Imported Foliate data."
-                else "Imported, but this file is from a different book identifier."
-            }.getOrElse { "Import failed: ${it.message ?: "unknown error"}" }
+            }.onSuccess { pendingImport = it }
+                .onFailure { transferNotice = "Import failed: ${it.message ?: "unknown error"}" }
         }
     }
     // ponytail: bookmarks match on the exact CFI string; compare with epubcfi.js in the
@@ -866,6 +875,17 @@ private fun ReaderScreen(
                 modifier = Modifier.fillMaxSize(),
             )
             return@Box
+        }
+
+        pendingImport?.let { merged ->
+            ImportPreviewDialog(
+                merged = merged,
+                onImport = {
+                    applyMerge(merged)
+                    pendingImport = null
+                },
+                onCancel = { pendingImport = null },
+            )
         }
 
         if (showBookmarks) {
@@ -1087,6 +1107,69 @@ private fun SelectionPanel(
             }
         }
     }
+}
+
+/** Foliate shows what a file holds before importing it; so do we. */
+@Composable
+private fun ImportPreviewDialog(
+    merged: FoliateJson.Merged,
+    onImport: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val items = remember(merged) { merged.annotations.toAnnotations() }
+    AlertDialog(
+        onDismissRequest = onCancel,
+        confirmButton = { TextButton(onClick = onImport) { Text("Import") } },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
+        title = { Text("Import annotations") },
+        text = {
+            Column {
+                if (!merged.identifierMatches) {
+                    Text(
+                        "This file is from a different book identifier.",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                Text(
+                    "${items.size} annotations, ${merged.bookmarks.toCfiList().size} bookmarks " +
+                        "after merging.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                LazyColumn(Modifier.padding(top = 8.dp)) {
+                    items(items.size) { index ->
+                        val item = items[index]
+                        Row(Modifier.padding(vertical = 6.dp)) {
+                            Box(
+                                Modifier.size(14.dp).background(
+                                    HIGHLIGHT_COLORS.toMap()[item.optString("color")]
+                                        ?: MaterialTheme.colorScheme.surfaceVariant,
+                                    CircleShape,
+                                ),
+                            )
+                            Column(Modifier.padding(start = 10.dp)) {
+                                Text(
+                                    item.optString("text"),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                val note = item.optString("note")
+                                if (note.isNotBlank()) {
+                                    Text(
+                                        note,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 3,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+                        HorizontalDivider()
+                    }
+                }
+            }
+        },
+    )
 }
 
 @Composable
