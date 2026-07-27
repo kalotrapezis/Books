@@ -1015,12 +1015,20 @@ private fun ReaderScreen(
 }
 
 /** Colours match Foliate's annotation palette so exported JSON stays compatible. */
+/** Foliate's own palette, by name, so imported colours land on the right swatch. */
 private val HIGHLIGHT_COLORS = listOf(
-    "yellow" to Color(0xFFFFE066),
-    "green" to Color(0xFF9BE29B),
-    "blue" to Color(0xFF9BC7F0),
-    "pink" to Color(0xFFF3A8C8),
+    "yellow" to Color(0xFFF6E58D),
+    "orange" to Color(0xFFF9C784),
+    "red" to Color(0xFFF3A0A0),
+    "magenta" to Color(0xFFEBA6D8),
+    "aqua" to Color(0xFF9BD8E0),
+    "lime" to Color(0xFFB6E29B),
 )
+
+/** Any other Foliate value is a CSS colour name or #rrggbb; show it as it draws. */
+private fun highlightSwatch(name: String): Color? =
+    HIGHLIGHT_COLORS.toMap()[name]
+        ?: runCatching { Color(android.graphics.Color.parseColor(name)) }.getOrNull()
 
 /** Colours, note and copy for the current selection; `null` colour clears the highlight. */
 @Composable
@@ -1130,7 +1138,7 @@ private fun ImportPreviewDialog(
                         Row(Modifier.padding(vertical = 6.dp)) {
                             Box(
                                 Modifier.size(14.dp).background(
-                                    HIGHLIGHT_COLORS.toMap()[item.optString("color")]
+                                    highlightSwatch(item.optString("color"))
                                         ?: MaterialTheme.colorScheme.surfaceVariant,
                                     CircleShape,
                                 ),
@@ -1202,7 +1210,7 @@ private fun AnnotationsScreen(
                     ) {
                         Box(
                             Modifier.size(16.dp).background(
-                                HIGHLIGHT_COLORS.toMap()[item.optString("color")]
+                                highlightSwatch(item.optString("color"))
                                     ?: MaterialTheme.colorScheme.surfaceVariant,
                                 CircleShape,
                             ),
