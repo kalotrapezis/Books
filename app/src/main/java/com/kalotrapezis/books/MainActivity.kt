@@ -1312,12 +1312,11 @@ private fun AnnotationsScreen(
     }
 }
 
-/**
- * Foliate keeps one file per book in its data directory, named
- * `encodeURIComponent(key).json`. Matching that means a synced folder just works.
- */
-private fun foliateFileName(book: BookEntity): String =
-    Uri.encode(book.foliateKey, null).replace("+", "%20") + ".json"
+/** Foliate names its exports “Annotations for “Title””; keep that, it reads well. */
+private fun foliateFileName(book: BookEntity): String {
+    val title = book.title.ifBlank { "book" }.replace(Regex("[/\\\\:*?\"<>|]"), "").take(80)
+    return "Annotations for \u201C$title\u201D.json"
+}
 
 private fun removeAnnotation(existing: List<JSONObject>, cfi: String): JSONArray =
     JSONArray(existing.filterNot { it.optString("value") == cfi }.toList())
