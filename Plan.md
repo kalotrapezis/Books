@@ -242,6 +242,18 @@ random-access loader.
 - Paginated: κάτω μπάρα με seek slider. Scrolled: τρεις τελείες αριστερά με
   bubble σελίδας και προσγείωση στο release. Η ρύθμιση flow αποθηκεύεται.
 - Bookmarks: Foliate-συμβατό JSON array CFI ανά βιβλίο (migration 2→3).
+- Ο reader έδειχνε λευκή σελίδα: ο `WebViewClient` έκοβε τα `blob:` URL που
+  φτιάχνει το ίδιο το `foliate-js` για κάθε ενότητα. Πλέον επιτρέπονται μόνο
+  `blob:`/`data:` επιπλέον του bundled origin, χωρίς άδεια Internet.
+- Chrome ανάγνωσης: επιπλέοντα ημιδιαφανή islands (top bar με τίτλο, κεφάλαιο
+  και ribbon για bookmarks, Chapters/Annotate, seek bar), tap οπουδήποτε
+  εμφανίζει/κρύβει το UI με animation, οριζόντιο drag γυρίζει σελίδα με
+  slide animation.
+- Bookmarks: πολλαπλά CFI ανά βιβλίο σε Foliate-συμβατό JSON array
+  (`bookmarks`, migration 2→3), λίστα με long press στο ribbon.
+- Chapters view από το TOC, select mode εκτός ανάγνωσης, paginated/scrolled,
+  δύο θέματα (grey on white, white on grey) και ρυθμίσεις τυπογραφίας
+  (μέγεθος, ύψος γραμμής, περιθώρια, γραμματοσειρά) που διατηρούνται.
 - Επιβεβαιώθηκαν σε Android 16 συσκευή η compact phone διάταξη, η side-panel
   διάταξη σε landscape/tablet πλάτος, η βιβλιοθήκη δύο πραγματικών EPUB, η
   ανεξάρτητη επαναφορά θέσης ανά βιβλίο, η αμφίδρομη πλοήγηση και η ακριβής
