@@ -1187,17 +1187,10 @@ private fun AnnotationsScreen(
 ) {
     Surface(modifier) {
         Column {
-            Row(Modifier.padding(8.dp)) {
-                TextButton(onClick = onBack) { Text("‹ Back") }
-                Text(
-                    "Annotations",
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.padding(start = 8.dp, top = 8.dp),
-                )
-                Spacer(Modifier.weight(1f))
-                TextButton(onClick = onSync) { Text(syncLabel) }
-                TextButton(onClick = onImport) { Text("Import") }
-                TextButton(onClick = onExport) { Text("Export") }
+            ScreenHeader("Annotations", onBack) {
+                PillButton(syncLabel, onSync)
+                PillButton("Import", onImport)
+                PillButton("Export", onExport)
             }
             if (notice.isNotBlank()) {
                 Text(notice, modifier = Modifier.padding(horizontal = 16.dp))
@@ -1261,6 +1254,45 @@ private fun removeAnnotation(existing: List<JSONObject>, cfi: String): JSONArray
 private fun List<JSONObject>.noteFor(cfi: String): String =
     firstOrNull { it.optString("value") == cfi }?.optString("note").orEmpty()
 
+/** Grey pill, dark label; the same shape the sidebar uses. */
+@Composable
+private fun PillButton(label: String, onClick: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = CircleShape,
+        modifier = Modifier.clickable(onClick = onClick),
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+        )
+    }
+}
+
+@Composable
+private fun ScreenHeader(
+    title: String,
+    onBack: () -> Unit,
+    actions: @Composable () -> Unit = {},
+) {
+    Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // Chevron only: the label was pushing the actions off screen, and the
+            // system back button does the same thing.
+            IconButton(onClick = onBack) {
+                Text("‹", style = MaterialTheme.typography.headlineMedium)
+            }
+            Text(title, style = MaterialTheme.typography.titleLarge)
+        }
+        Row(
+            Modifier.padding(start = 8.dp, bottom = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) { actions() }
+    }
+}
+
 @Composable
 private fun ChaptersScreen(
     toc: List<TocEntry>,
@@ -1270,14 +1302,7 @@ private fun ChaptersScreen(
 ) {
     Surface(modifier) {
         Column {
-            Row(Modifier.padding(8.dp)) {
-                TextButton(onClick = onBack) { Text("‹ Back") }
-                Text(
-                    "Chapters",
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.padding(start = 8.dp, top = 8.dp),
-                )
-            }
+            ScreenHeader("Chapters", onBack)
             LazyColumn(Modifier.fillMaxSize()) {
                 items(toc.size) { index ->
                     val entry = toc[index]
