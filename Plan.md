@@ -269,6 +269,23 @@ random-access loader.
 - Identifier mismatch warning.
 - Golden fixtures από πραγματικό Foliate.
 
+Τρέχουσα πρόοδος:
+
+- Bookmarks ανά βιβλίο ως συμβατός πίνακας CFI· η κορδέλα στο top bar τα προσθέτει
+  και με long press ανοίγει η λίστα τους.
+- Highlights με την παλέτα του Foliate (yellow, orange, red, magenta, aqua, lime),
+  σημειώσεις στην ίδια εγγραφή, διαγραφή χρώματος, και λίστα annotations με
+  μετάβαση στο CFI.
+- Import/export ακριβούς Foliate JSON: `metadata`, `lastLocation`,
+  `progress` ως `[τρέχουσα τοποθεσία, σύνολο]`, `bookmarks`, `annotations`.
+  Άγνωστα πεδία διατηρούνται αυτούσια και επιστρέφουν στο επόμενο export.
+- Συγχώνευση βάσει `value` και `modified`, ένωση bookmarks, προειδοποίηση όταν
+  το `identifier` δεν ταιριάζει, και preview modal πριν γραφτεί οτιδήποτε.
+- Συγχρονισμός με ένα αρχείο ανά βιβλίο μέσα σε συγχρονισμένο φάκελο
+  (Syncthing/Nextcloud), με μόνιμη άδεια ανάγνωσης/εγγραφής.
+- Επαληθεύτηκε με πραγματικό αρχείο εξαγωγής Foliate (567 annotations).
+- Εκκρεμούν: HTML/Markdown/ORG export και golden fixtures.
+
 ### Φάση 3 — PDF και επιπλέον formats
 
 - PDF.js ως ξεχωριστό experimental milestone.

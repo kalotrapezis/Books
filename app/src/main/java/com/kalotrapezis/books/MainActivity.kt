@@ -25,6 +25,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.BorderStroke
@@ -92,6 +97,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.asImageBitmap
@@ -868,6 +874,21 @@ private fun ReaderScreen(
             return@Box
         }
 
+        // Big books take a while to parse and lay out; say so instead of showing blank.
+        if (!readerReady && error.isBlank()) {
+            Column(
+                Modifier.align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                SpinningPage()
+                Text(
+                    "Opening ${book.title.ifBlank { "book" }}…",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+            }
+        }
+
         openedAnnotation?.let { item ->
             AnnotationNoteDialog(annotation = item, onDismiss = { openedAnnotation = null })
         }
@@ -1328,6 +1349,56 @@ private fun removeAnnotation(existing: List<JSONObject>, cfi: String): JSONArray
 
 private fun List<JSONObject>.noteFor(cfi: String): String =
     firstOrNull { it.optString("value") == cfi }?.optString("note").orEmpty()
+
+/** A page with a folded corner, tumbling while the book loads. */
+@Composable
+private fun SpinningPage() {
+    val spin = rememberInfiniteTransition(label = "page")
+    val angle by spin.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(1600, easing = LinearEasing)),
+        label = "angle",
+    )
+    val ink = MaterialTheme.colorScheme.onSurface
+    Canvas(Modifier.size(56.dp)) {
+        rotate(angle) {
+            val w = size.width * 0.62f
+            val h = size.height * 0.82f
+            val left = (size.width - w) / 2f
+            val top = (size.height - h) / 2f
+            val fold = w * 0.3f
+            val page = Path().apply {
+                moveTo(left, top)
+                lineTo(left + w - fold, top)
+                lineTo(left + w, top + fold)
+                lineTo(left + w, top + h)
+                lineTo(left, top + h)
+                close()
+            }
+            drawPath(page, ink, style = Stroke(width = 4f))
+            // the folded corner
+            drawPath(
+                Path().apply {
+                    moveTo(left + w - fold, top)
+                    lineTo(left + w - fold, top + fold)
+                    lineTo(left + w, top + fold)
+                },
+                ink,
+                style = Stroke(width = 4f),
+            )
+            repeat(3) { line ->
+                val y = top + h * (0.45f + line * 0.16f)
+                drawLine(
+                    ink.copy(alpha = 0.6f),
+                    start = Offset(left + w * 0.18f, y),
+                    end = Offset(left + w * 0.82f, y),
+                    strokeWidth = 3f,
+                )
+            }
+        }
+    }
+}
 
 /** Grey pill, dark label; the same shape the sidebar uses. */
 @Composable
