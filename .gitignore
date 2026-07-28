@@ -1,0 +1,20 @@
+# Local upstream reference archive; never publish it from this repository.
+/foliate-gtk4/
+
+# Local setup helper.
+/check_environment.sh
+
+# Android Studio and Gradle local state.
+/.gradle/
+/.kotlin/
+/.idea/
+**/build/
+local.properties
+*.iml
+
+# OS/editor leftovers.
+.DS_Store
+*~
+
+# Locally built APKs for testing.
+/dist/

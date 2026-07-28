@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data: blob:; connect-src 'self'; object-src 'none'; frame-src blob: data:; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Books reader capability check</title>
+  <style>
+    :root { color-scheme: light dark; font-family: sans-serif; }
+    body { margin: 0; overflow: hidden; }
+    #status { font-weight: 600; }
+    #status:not(:empty) { padding: 1rem; }
+    foliate-view { position: fixed; inset: 0; display: block; }
+    * { scrollbar-width: none; }
+    ::-webkit-scrollbar { width: 0; height: 0; display: none; }
+  </style>
+</head>
+<body>
+  <p id="status">Checking bundled foliate-js…</p>
+  <script type="module" src="./check.js?v=55"></script>
+</body>
+</html>
