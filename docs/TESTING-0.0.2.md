@@ -38,10 +38,13 @@ already; the rest need your real device and real files.
     PDF metadata and the cover thumbnail rendered.
 12. ~~MOBI/AZW3~~ — not applicable, you have no such files. The loader is wired
     up and untested; leave it that way until a file turns up.
-13. ~~FB2/FBZ~~ — same.
-14. Pick something that is not a book (a .txt, a photo): the reader shows a
-    clean error, no crash, and nothing broken in the library afterwards.
-15. A password-protected or DRM file (`.acsm` is not a book): clean error.
+13. ✔ FB2 and FBZ open with the right title, author, chapters and TOC. Tested on
+    the emulator with a hand-made file, since there is no real one here.
+14. ✔ Pick something that is not a book (a .txt): "File type not supported", no
+    crash, and it does not end up in the library.
+15. ✔ A password-protected archive: clean error ("No supported image files in
+    archive"), no crash. The wording is generic — it does not say the file is
+    locked. `.acsm` (DRM) is untested, there is no such file here.
 
 ## C. No regressions
 
@@ -60,8 +63,19 @@ already; the rest need your real device and real files.
 25. ✔ With "Scrolled reading" ON, a PDF or comic keeps the paginated arrows and
     seek bar and still turns by drag — scrolled mode only applies to text books.
 26. Tap the middle of a PDF or comic page: the UI hides and shows, as in EPUB.
+    (Pages turn by drag, not by tap — a tap only toggles the UI.)
     (Image-only pages report no selection object at all, which used to make the
     reader treat every tap and drag as "text is selected" and ignore it.)
+
+## E. The selection bug you reported
+
+27. ✔ Select a word, then tap somewhere else: the panel closes and the bottom
+    island comes back. (Before the fix the WebView ate that tap — no click and
+    no selectionchange reached the reader — so the panel stayed open and the
+    chrome stayed hidden until you pressed Cancel.)
+28. Select a word, then press Cancel, Copy, Cite or a colour: same as before.
+29. Select a word, then long press another word: the new selection is reported
+    and the panel follows it.
 
 ## Known gaps, not bugs to report
 

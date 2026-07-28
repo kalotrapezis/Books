@@ -990,6 +990,7 @@ private fun ReaderScreen(
                     selection = cfi to selectedText
                     selectionLower = lower
                 },
+                onSelectionCleared = { selection = null },
                 onTapPage = { forward -> sendCommand(if (forward) "Next" else "Previous") },
                 // No inset: the chrome floats over the page, so the text never reflows
                 // when it appears.
@@ -2000,6 +2001,7 @@ private fun ReaderView(
     onTapped: () -> Unit,
     onAnnotationTapped: (String) -> Unit,
     onSelected: (String, String, Boolean) -> Unit,
+    onSelectionCleared: () -> Unit,
     onTapPage: (Boolean) -> Unit,
     onRelocated: (String, Double?, Int?, Int?, String, String) -> Unit,
     onReaderError: (String) -> Unit,
@@ -2043,12 +2045,13 @@ private fun ReaderView(
             // action mode still runs, it just gets an empty menu.
             object : WebView(context) {
                 override fun startActionMode(callback: ActionMode.Callback?): ActionMode? =
-                    super.startActionMode(EmptyMenu(callback))
+                    super.startActionMode(EmptyMenu(callback, onSelectionCleared))
 
                 override fun startActionMode(
                     callback: ActionMode.Callback?,
                     type: Int,
-                ): ActionMode? = super.startActionMode(EmptyMenu(callback), type)
+                ): ActionMode? =
+                    super.startActionMode(EmptyMenu(callback, onSelectionCleared), type)
             }.apply {
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 isVerticalScrollBarEnabled = false
@@ -2106,6 +2109,7 @@ private fun ReaderView(
                                 onSelected(cfi, selected, data.optBoolean("lower", true))
                             }
                         }
+                        "SelectionCleared" -> onSelectionCleared()
                         "TappedPrevious" -> onTapPage(false)
                         "TappedNext" -> onTapPage(true)
                         "ReaderError" -> onReaderError(
@@ -2218,8 +2222,16 @@ private class LocalReaderClient(
     }
 }
 
-/** Passes the selection action mode through with no menu items of its own. */
-private class EmptyMenu(private val inner: ActionMode.Callback?) : ActionMode.Callback {
+/**
+ * Passes the selection action mode through with no menu items of its own. Its lifetime is
+ * the selection's: tapping away drops the selection inside the WebView without firing a
+ * click or a selectionchange in the book document, so this is the only place the app hears
+ * that the selection is gone.
+ */
+private class EmptyMenu(
+    private val inner: ActionMode.Callback?,
+    private val onDestroyed: () -> Unit = {},
+) : ActionMode.Callback {
     override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
         inner?.onCreateActionMode(mode, menu)
         menu.clear()
@@ -2236,6 +2248,7 @@ private class EmptyMenu(private val inner: ActionMode.Callback?) : ActionMode.Ca
 
     override fun onDestroyActionMode(mode: ActionMode) {
         inner?.onDestroyActionMode(mode)
+        onDestroyed()
     }
 }
 
