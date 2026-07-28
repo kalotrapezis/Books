@@ -77,6 +77,49 @@ already; the rest need your real device and real files.
 29. Select a word, then long press another word: the new selection is reported
     and the panel follows it.
 
+## F. Search, and the two fixes after 0.0.2
+
+30. Sidebar → Search, type two letters or more, Find: results list with the
+    chapter and the words around the match, and every hit outlined in the page.
+    Tapping one goes there.
+31. A second search replaces the first; an empty box clears the outlines.
+32. On a phone, Search is in the bottom pill next to Chapters and Notes.
+33. Select a word and press Note: the panel stays open with the field. This was
+    broken in 0.0.2 — the field took focus, the WebView lost it, and the panel
+    went with it.
+34. Add a file that is not a book: the error shows and it does not stay in the
+    library. A book you have read keeps its row even if its file is gone.
+35. Long press the ribbon: each bookmark says its chapter, its section and the
+    words it sits on, instead of "Saved page 1".
+
+## G. Phase 4
+
+36. Chapters: a book with landmarks or printed page numbers shows them under
+    their own headings, and each one opens where it says. A book with neither
+    looks exactly as before.
+37. Press ▶ in the top bar: the book is read aloud, the sentence being read is
+    underlined and scrolls into view, and it carries on into the next chapter
+    on its own. ✕ stops it.
+38. A Greek book should be read with a Greek voice — it comes from the book's
+    metadata, so a book that declares nothing falls back to the device voice.
+    (Install the voice in Android's settings if it sounds wrong.)
+39. Leave the book while it is reading: the voice stops.
+40. Tap a picture in a book: it opens full screen, double tap fills the screen,
+    a tap closes it.
+41. Select text: the top bar stays, so read aloud and the bookmark ribbon are
+    still in reach while the selection panel is open. On the emulator, select
+    with the mouse too — that is a pointer, not a finger, and it used to be
+    ignored, which left you with no panel at all.
+42. Select a word, then drag a handle to widen the selection over several
+    paragraphs: the panel stays open and its excerpt grows with it. Grabbing a
+    handle ends Android's selection action mode, which the reader used to read
+    as "the selection is gone" — it asks the page now instead of guessing.
+43. Read aloud is in two places now: circled in the top bar, and bigger in the
+    island under the page.
+44. TalkBack on: the bookmark ribbon, the page arrows, the back chevron and the
+    read-aloud button all announce what they do. This is the one item here I
+    could not check on the emulator.
+
 ## Known gaps, not bugs to report
 
 - A fixed-layout page (PDF, comic) is not centred in the pane and its bottom is

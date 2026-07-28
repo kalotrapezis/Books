@@ -353,6 +353,37 @@ random-access loader.
 - Calibre embedded highlights.
 - TalkBack, scalable text και accessibility tests.
 
+Τρέχουσα πρόοδος:
+
+- Αναζήτηση σε όλο το βιβλίο με τη μηχανή του `foliate-js`: τα αποτελέσματα
+  έρχονται ανά ενότητα σε παρτίδες, με κεφάλαιο και απόσπασμα, και το άγγιγμα
+  πηγαίνει στο CFI. Νέα αναζήτηση ακυρώνει την προηγούμενη· όριο 300 ευρήματα.
+  Καρτέλα «Search» στο sidebar του tablet, πλήρης οθόνη στο τηλέφωνο.
+- Copy/citation και dictionary/Wikipedia/translation υπάρχουν ήδη από τη Φάση 2.
+- Διορθώθηκε: όταν το `foliate-js` πλοηγείται, μετακινεί και τον δρομέα
+  (`setSelectionTo` του paginator), οπότε κάθε μετάβαση φαινόταν σαν επιλογή
+  κειμένου και άνοιγε το πάνελ. Πλέον αναφέρεται μόνο επιλογή που ξεκίνησε από
+  άγγιγμα στη σελίδα.
+- Page list και landmarks: το `BookReady` φέρνει και τα δύο και εμφανίζονται στην
+  ίδια οθόνη Chapters, κάτω από δικές τους επικεφαλίδες («Landmarks»,
+  «Contents», «Printed pages»). Βιβλίο χωρίς αυτά δεν δείχνει επικεφαλίδες.
+- Ανάγνωση φωναχτά με το Android TTS. Το `foliate-js` παράγει SSML για
+  speech-dispatcher, που το Android δεν δέχεται, οπότε ο reader το ισοπεδώνει σε
+  κείμενο και το δίνει μπλοκ-μπλοκ· όταν τελειώσει η φωνή ζητείται το επόμενο,
+  και η ενότητα γυρίζει μόνη της. Το πρώτο `mark` κάθε μπλοκ ορίζεται από τον
+  reader, γιατί το Android δεν αναφέρει marks: αυτό υπογραμμίζει και κυλά στην
+  πρόταση που διαβάζεται. Η γλώσσα έρχεται από τα metadata του βιβλίου.
+- Image viewer: εικόνα του βιβλίου ανοίγει σε πλήρη οθόνη μέσα στην ίδια σελίδα
+  του reader (tap κλείνει, διπλό tap μεγεθύνει). Τα bytes δεν περνούν από το
+  bridge ούτε φτάνουν σε native decoder.
+- Accessibility: content descriptions στα σχεδιασμένα χειριστήρια (κορδέλα
+  bookmark, βελάκια σελίδας, back, ανάγνωση φωναχτά).
+- Εκκρεμούν: OPDS catalogs (χρειάζεται άδεια Internet — απόφαση δική σου, το
+  app σήμερα διαφημίζει ότι δεν έχει καμία), Calibre embedded highlights
+  (το `foliate-js` δίνει `getCalibreBookmarks()`, αλλά η μετατροπή των calibre
+  CFI σε EPUB CFI δεν γράφεται στα τυφλά — χρειάζεται πραγματικό αρχείο
+  calibre), TalkBack end-to-end σε συσκευή.
+
 ### Φάση 5 — Backup και Linux/Foliate interoperability
 
 - Versioned manual backup/restore.

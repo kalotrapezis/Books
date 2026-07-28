@@ -79,21 +79,28 @@ class CoverExtractorTest {
         assertNull(CoverExtractor.extract(context, uri, "nocover"))
     }
 
-    @Test fun ignoresTraversalOutsideTheZip() {
-        val uri = epub(
-            "OEBPS/content.opf",
-            """
-            <package xmlns="http://www.idpf.org/2007/opf">
-              <manifest>
-                <item id="c" href="../../../etc/hosts" properties="cover-image"
-                      media-type="image/png"/>
-              </manifest>
-            </package>
-            """.trimIndent(),
-            "OEBPS/images/cover.png",
-        )
+    // A manifest href that climbs out of the zip must never be read. With no other
+    // image inside, there is nothing to fall back to and nothing comes out.
+    @Test fun readsNothingOutsideTheZip() {
+        val uri = epub("OEBPS/content.opf", TRAVERSING_OPF, coverPath = null)
         assertNull(CoverExtractor.extract(context, uri, "traversal"))
     }
+
+    // With an image inside, the traversing href is still ignored and the first image in
+    // the archive stands in for it, the way it does for a comic with no manifest at all.
+    @Test fun fallsBackToTheFirstImageInTheZip() {
+        val uri = epub("OEBPS/content.opf", TRAVERSING_OPF, "OEBPS/images/cover.png")
+        assertNotNull(CoverExtractor.extract(context, uri, "traversal-fallback"))
+    }
+
+    private val TRAVERSING_OPF = """
+        <package xmlns="http://www.idpf.org/2007/opf">
+          <manifest>
+            <item id="c" href="../../../etc/hosts" properties="cover-image"
+                  media-type="image/png"/>
+          </manifest>
+        </package>
+    """.trimIndent()
 
     /** Builds a minimal EPUB zip and returns a readable file Uri for it. */
     private fun epub(opfPath: String, opf: String, coverPath: String?): Uri {

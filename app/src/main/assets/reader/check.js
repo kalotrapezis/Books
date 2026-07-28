@@ -7,6 +7,15 @@ const annotations = new Map()
 let typography = null
 /** Fixed-layout zoom: null means fit the whole page, a number is a pinch scale. */
 let zoom = null
+/** The overlay key for the sentence being read aloud, kept out of the book's own. */
+const SPOKEN_KEY = 'books-spoken'
+/** foliate's overlay drawing functions, shared with reading aloud. */
+let Overlayer
+/** A new search abandons the one still walking the book. */
+let searchToken = 0
+// ponytail: a hard cap, not paging. A search with thousands of hits is a search that
+// needs narrowing; add paging if a real book ever proves otherwise.
+const MAX_SEARCH_RESULTS = 300
 
 const send = message => globalThis.booksBridge?.postMessage(JSON.stringify(message))
 const text = value => typeof value === 'string'
@@ -51,7 +60,7 @@ try {
                 new URL('./pdf-worker.mjs', import.meta.url).toString()
         }
         const { makeBook } = await import('../view.js')
-        const { Overlayer } = await import('../overlayer.js')
+        ;({ Overlayer } = await import('../overlayer.js'))
         const book = await makeBook(`/book/${bookFile}`)
         document.body.dataset.readerStage = 'book-parsed'
         secureBookContent(book)
@@ -88,7 +97,12 @@ try {
             title: text(languageMap(book.metadata?.title)).replace(/^\/book\/.*/, ''),
             author: contributor(book.metadata?.author),
             identifier: text(book.metadata?.identifier),
+            // Reading aloud picks its voice from this, not from the phone's locale.
+            language: text(languageMap(book.metadata?.language)).slice(0, 35),
             toc: flattenToc(book.toc),
+            // Printed page numbers and the book's own landmarks, when it has them.
+            pageList: flattenToc(book.pageList),
+            landmarks: flattenToc(book.landmarks),
             // Comics and PDF: their renderer ignores the flow setting, so the app keeps
             // the paginated controls for them instead of the scrolled ones.
             fixedLayout: Boolean(view.isFixedLayout),
@@ -101,6 +115,13 @@ try {
             if (!doc) return
             let start = null
             let swiped = false
+            // foliate moves the caret with the page when it navigates (the paginator's
+            // setSelectionTo), so a bare selectionchange is not proof that the reader
+            // selected anything. A pointer on the page starts one; the changes after
+            // that are its handles being dragged. Pointer, not touch: a mouse and a
+            // stylus select as well, and an emulator has no fingers at all.
+            let touchedAt = 0
+            let reporting = false
             let pinchStart = null
             const spread = event => Math.hypot(
                 event.touches[0].clientX - event.touches[1].clientX,
@@ -116,7 +137,11 @@ try {
                 const touch = event.touches[0]
                 start = touch ? { x: touch.clientX, y: touch.clientY } : null
                 swiped = false
+                touchedAt = Date.now()
             }, { passive: true })
+            doc.addEventListener('pointerdown', () => {
+                touchedAt = Date.now()
+            }, { passive: true, capture: true })
             doc.addEventListener('touchmove', event => {
                 if (!pinchStart || event.touches.length !== 2) return
                 const factor = spread(event) / (pinchStart.distance || 1)
@@ -156,20 +181,11 @@ try {
             }, { passive: true })
             doc.addEventListener('selectionchange', () => {
                 const selection = doc.defaultView?.getSelection()
-                if (!selection || selection.isCollapsed) return
-                const range = selection.getRangeAt(0)
-                const cfi = view.getCFI(detail.index, range)
-                if (!validCfi(cfi)) return
-                // Roughly where on the page the selection sits, so the native panel
-                // can dock on the opposite side and never cover it.
-                const rect = range.getBoundingClientRect()
-                const height = doc.documentElement.clientHeight || 1
-                send({
-                    type: 'Selected',
-                    cfi,
-                    text: text(selection.toString()),
-                    lower: (rect.top + rect.height / 2) / height > 0.5,
-                })
+                const open = selection?.isCollapsed === false
+                if (open && !reporting && Date.now() - touchedAt > 2000) return
+                reporting = open
+                if (!open) return
+                sendSelection(view)
             })
             doc.addEventListener('click', event => {
                 if (swiped) {
@@ -177,6 +193,17 @@ try {
                     return
                 }
                 if (event.target?.closest?.('a')) return
+                // A picture in the book opens full screen, inside the reader page. Its
+                // bytes never cross the bridge and never reach a native decoder.
+                const image = event.target?.closest?.('img, image, svg image')
+                if (image && !view.isFixedLayout) {
+                    const source = image.currentSrc || image.src
+                        || image.getAttribute?.('href') || ''
+                    if (source.startsWith('blob:') || source.startsWith('data:')) {
+                        showImage(source, image.getAttribute?.('alt'))
+                        return
+                    }
+                }
                 // A page with no text at all (comics, PDF images) has no selection
                 // object; that is not an open selection, it is nothing to protect.
                 if (doc.defaultView?.getSelection()?.isCollapsed === false) return
@@ -295,6 +322,11 @@ try {
                     .catch(showReaderError)
                 return
             }
+            if (command.type === 'ReportSelection'
+                && Object.keys(command).length === 1) {
+                sendSelection(view)
+                return
+            }
             if (command.type === 'ClearSelection'
                 && Object.keys(command).length === 1) {
                 for (const { doc } of view.renderer.getContents())
@@ -305,6 +337,92 @@ try {
                 && Object.keys(command).length === 2
                 && typeof command.enabled === 'boolean') {
                 setSelectable(command.enabled)
+                return
+            }
+            // Bookmarks are stored as bare CFI, the way Foliate stores them, so the
+            // chapter each one sits in has to be resolved here, off the book itself.
+            if (command.type === 'DescribeCfis'
+                && Object.keys(command).length === 2
+                && Array.isArray(command.cfis)
+                && command.cfis.length <= 500
+                && command.cfis.every(validCfi)) {
+                const total = view.book?.sections?.length ?? 0
+                commandQueue = commandQueue
+                    .then(async () => {
+                        const described = []
+                        for (const cfi of command.cfis) {
+                            const chapter = text((await view.getTOCItemOf(cfi))?.label)
+                            const { index, anchor } = view.resolveCFI(cfi) ?? {}
+                            described.push({
+                                cfi,
+                                chapter,
+                                section: Number.isInteger(index) ? index + 1 : null,
+                                sections: total,
+                                // Two bookmarks in one chapter look alike without the
+                                // words they sit on.
+                                excerpt: await excerpt(view, index, anchor),
+                            })
+                        }
+                        send({ type: 'CfisDescribed', described })
+                    })
+                    .catch(showReaderError)
+                return
+            }
+            // foliate-js searches the whole book itself and highlights what it finds.
+            // Results arrive section by section, so they are sent in batches and the
+            // list fills as they come instead of after the last chapter.
+            if (command.type === 'Search'
+                && Object.keys(command).length === 2
+                && typeof command.query === 'string'
+                && command.query.trim().length >= 2
+                && command.query.length <= 256) {
+                searchToken += 1
+                const token = searchToken
+                commandQueue = commandQueue
+                    .then(async () => {
+                        let batch = []
+                        let total = 0
+                        for await (const result of view.search({ query: command.query })) {
+                            if (token !== searchToken) return
+                            if (result === 'done' || !result.subitems) continue
+                            for (const item of result.subitems) {
+                                if (!validCfi(item.cfi)) continue
+                                batch.push({
+                                    cfi: item.cfi,
+                                    chapter: text(result.label),
+                                    pre: text(item.excerpt?.pre),
+                                    match: text(item.excerpt?.match),
+                                    post: text(item.excerpt?.post),
+                                })
+                                total += 1
+                            }
+                            if (batch.length >= 20) {
+                                send({ type: 'SearchResults', results: batch, done: false })
+                                batch = []
+                            }
+                            if (total >= MAX_SEARCH_RESULTS) break
+                        }
+                        if (token === searchToken) {
+                            send({ type: 'SearchResults', results: batch, done: true })
+                        }
+                    })
+                    .catch(showReaderError)
+                return
+            }
+            if (command.type === 'ClearSearch'
+                && Object.keys(command).length === 1) {
+                searchToken += 1
+                view.clearSearch()
+                return
+            }
+            // Android's engine has no SSML, so foliate's marked-up fragment is flattened
+            // to text here and spoken block by block, with its own block highlighted.
+            if (command.type === 'Speak'
+                && Object.keys(command).length === 2
+                && ['start', 'next', 'stop'].includes(command.action)) {
+                commandQueue = commandQueue
+                    .then(() => speak(view, command.action))
+                    .catch(showReaderError)
                 return
             }
             if (command.type === 'GoToHref'
@@ -380,6 +498,137 @@ function secureBookContent(book) {
         event.detail.data = Promise.resolve(event.detail.data)
             .then(data => sanitizeDocument(data, event.detail.type))
     })
+}
+
+/**
+ * The words a CFI points at, for a bookmark list that reads like the book.
+ * ponytail: loads the section document per bookmark; cache by section if a library
+ * of hundreds of bookmarks in one book ever makes opening the list slow.
+ */
+async function excerpt(view, index, anchor) {
+    if (!Number.isInteger(index) || typeof anchor !== 'function') return ''
+    try {
+        const doc = await view.book.sections[index].createDocument()
+        const found = anchor(doc)
+        const range = found instanceof Range ? found : doc.createRange()
+        if (!(found instanceof Range) && found) range.selectNodeContents(found)
+        // A bookmark is a point, not a span, so read on from where it sits.
+        const after = doc.createRange()
+        after.setStart(range.startContainer, range.startOffset)
+        after.setEnd(doc.body, doc.body.childNodes.length)
+        return text(after.toString()).slice(0, 120)
+    } catch {
+        return ''
+    }
+}
+
+/**
+ * What is selected in the book right now, if anything. The reader is asked this
+ * whenever Android's selection action mode ends: the mode also dies when the handles
+ * are grabbed or the panel takes focus, and only the page knows the difference.
+ */
+function sendSelection(view) {
+    for (const { doc, index } of view.renderer?.getContents?.() ?? []) {
+        const selection = doc?.defaultView?.getSelection()
+        if (!selection || selection.isCollapsed || !selection.rangeCount) continue
+        const range = selection.getRangeAt(0)
+        const cfi = view.getCFI(index, range)
+        if (!validCfi(cfi)) continue
+        // Roughly where on the page the selection sits, so the native panel can dock
+        // on the opposite side and never cover it.
+        const rect = range.getBoundingClientRect()
+        const height = doc.documentElement.clientHeight || 1
+        send({
+            type: 'Selected',
+            cfi,
+            text: text(selection.toString()),
+            lower: (rect.top + rect.height / 2) / height > 0.5,
+        })
+        return true
+    }
+    send({ type: 'SelectionCleared' })
+    return false
+}
+
+/**
+ * Full-screen view of a picture from the book, drawn over the reader page itself.
+ * Tap to close, double tap to fill the screen and back.
+ */
+function showImage(source, alt) {
+    document.querySelector('#image-viewer')?.remove()
+    const viewer = document.createElement('div')
+    viewer.id = 'image-viewer'
+    const picture = document.createElement('img')
+    picture.src = source
+    picture.alt = text(alt)
+    picture.style.cssText =
+        'max-width:100%;max-height:100%;object-fit:contain;transition:transform .2s'
+    viewer.style.cssText = 'position:fixed;inset:0;z-index:9;display:flex;'
+        + 'align-items:center;justify-content:center;background:rgba(0,0,0,.92);'
+        + 'padding:16px;box-sizing:border-box'
+    let filled = false
+    viewer.addEventListener('click', () => viewer.remove())
+    picture.addEventListener('dblclick', event => {
+        event.stopPropagation()
+        filled = !filled
+        picture.style.transform = filled ? 'scale(2)' : 'scale(1)'
+    })
+    viewer.append(picture)
+    document.body.append(viewer)
+}
+
+/**
+ * One step of reading aloud. foliate walks the blocks and keeps the highlight; the app
+ * owns the voice, so each step answers with the words to say next, or with nothing when
+ * the book is finished.
+ */
+async function speak(view, action) {
+    const clearSpoken = () => view.renderer?.getContents?.()
+        .forEach(content => content.overlayer?.remove(SPOKEN_KEY))
+    if (action === 'stop') {
+        clearSpoken()
+        view.tts = null
+        send({ type: 'Spoke', text: '', done: true })
+        return
+    }
+    const init = async () => {
+        await view.initTTS('sentence', range => {
+            // Follow the voice: scroll to the sentence and mark it, so a page of text
+            // says where it is being read.
+            view.renderer.scrollToAnchor(range.cloneRange(), true)
+            const overlayer = view.renderer.getContents()
+                .find(content => content.overlayer)?.overlayer
+            if (!overlayer) return
+            overlayer.remove(SPOKEN_KEY)
+            overlayer.add(SPOKEN_KEY, range.cloneRange(), Overlayer.underline, {
+                color: 'currentColor',
+            })
+        })
+    }
+    await init()
+    let ssml = action === 'start' ? view.tts.start() : view.tts.next()
+    if (!ssml) {
+        // The section is spoken out: turn the page and carry on from its first block.
+        const moved = await view.next().then(() => true, () => false)
+        if (!moved) {
+            send({ type: 'Spoke', text: '', done: true })
+            return
+        }
+        view.tts = null
+        await init()
+        ssml = view.tts.start()
+    }
+    if (!ssml) {
+        send({ type: 'Spoke', text: '', done: true })
+        return
+    }
+    const fragment = new DOMParser().parseFromString(ssml, 'application/xml')
+    // foliate follows along by mark, and Android's engine reports none, so the first
+    // mark of the block is set here: that is what scrolls and underlines it.
+    const mark = fragment.querySelector('mark[name]')?.getAttribute('name')
+    if (mark) view.tts.setMark(mark)
+    const spoken = text(fragment.documentElement?.textContent).slice(0, 4000)
+    send({ type: 'Spoke', text: spoken, done: !spoken })
 }
 
 /** Pinch zoom for PDF and comics; foliate re-renders PDF pages at the new scale. */
