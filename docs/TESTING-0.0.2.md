@@ -142,6 +142,22 @@ already; the rest need your real device and real files.
 52. Nothing else in the file is disturbed — Foliate's own fields still round
     trip untouched.
 
+## H. The one island (new, unreleased)
+
+44. Reading: the island sits at the bottom with the book, the chapter, where
+    you are and the ribbon on top; Chapters/Notes/Search and the seek row
+    below. Nothing at the top of the screen any more.
+45. Select text: the same island, in the same place, now showing the colours,
+    read aloud and the actions. It does not move, and the selected text is no
+    longer echoed back at you.
+46. Press Note: the field opens in the island, with only Cancel and Save beside
+    it. Cancel puts the actions back; a second Cancel drops the selection.
+47. With the keyboard up, the island lifts above it and Save stays reachable.
+48. Tablet: the sidebar is untouched, and the island carries the book's own
+    controls at the bottom of the page.
+49. Scrolled mode: no seek row in the island, the scrub handle is still at the
+    left edge, and read aloud is still in the island.
+
 ## Known gaps, not bugs to report
 
 - A fixed-layout page (PDF, comic) is not centred in the pane and its bottom is
