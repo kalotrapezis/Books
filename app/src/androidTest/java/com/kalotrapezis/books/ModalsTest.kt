@@ -71,8 +71,9 @@ class ModalsTest {
 
         compose.onNodeWithText("Note").performClick()
         compose.onNode(hasSetTextAction()).performTextReplacement("a note of mine")
-        // The panel is still here, with its excerpt, and Save is now offered.
-        compose.onNodeWithText("some selected words").assertIsDisplayed()
+        // The panel is still here — the text does not echo the page any more, so the
+        // field itself and Save are what prove it survived taking focus.
+        compose.onNodeWithText("a note of mine").assertIsDisplayed()
         compose.onNodeWithText("Save").assertIsDisplayed().performClick()
 
         assertEquals("yellow" to "a note of mine", saved)
@@ -407,20 +408,20 @@ class ModalsTest {
         compose.setContent {
             var speaking by remember { mutableStateOf(false) }
             MaterialTheme {
-                ReaderTopBar(
-                    book = book,
-                    chapter = "Chapter One",
-                    error = "",
-                    bookmarked = false,
-                    onBack = null,
-                    backIsSidebar = false,
-                    onToggleBookmark = {},
-                    onShowBookmarks = {},
+                SelectionPanel(
+                    excerpt = "words",
+                    note = "",
                     speaking = speaking,
                     onToggleSpeaking = {
                         speaking = !speaking
                         toggled += 1
                     },
+                    onHighlight = { _, _ -> },
+                    onCopy = {},
+                    onCite = {},
+                    onShare = {},
+                    onLookUp = {},
+                    onDismiss = {},
                 )
             }
         }
@@ -438,17 +439,16 @@ class ModalsTest {
     fun theDrawnControlsAreAnnouncedToAScreenReader() {
         compose.setContent {
             MaterialTheme {
-                ReaderTopBar(
+                IslandHeader(
                     book = book,
                     chapter = "",
                     error = "",
+                    page = "12 / 340",
                     bookmarked = true,
                     onBack = {},
                     backIsSidebar = false,
                     onToggleBookmark = {},
                     onShowBookmarks = {},
-                    speaking = false,
-                    onToggleSpeaking = {},
                 )
             }
         }
@@ -456,6 +456,8 @@ class ModalsTest {
             "Remove this bookmark, long press for the list",
         ).assertIsDisplayed()
         compose.onNodeWithContentDescription("Back").assertIsDisplayed()
+        // The island carries the book's place now that the top bar is gone.
+        compose.onNodeWithText("12 / 340").assertIsDisplayed()
     }
 
     @Test
