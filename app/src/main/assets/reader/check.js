@@ -307,6 +307,35 @@ try {
                 setSelectable(command.enabled)
                 return
             }
+            // Bookmarks are stored as bare CFI, the way Foliate stores them, so the
+            // chapter each one sits in has to be resolved here, off the book itself.
+            if (command.type === 'DescribeCfis'
+                && Object.keys(command).length === 2
+                && Array.isArray(command.cfis)
+                && command.cfis.length <= 500
+                && command.cfis.every(validCfi)) {
+                const total = view.book?.sections?.length ?? 0
+                commandQueue = commandQueue
+                    .then(async () => {
+                        const described = []
+                        for (const cfi of command.cfis) {
+                            const chapter = text((await view.getTOCItemOf(cfi))?.label)
+                            const { index, anchor } = view.resolveCFI(cfi) ?? {}
+                            described.push({
+                                cfi,
+                                chapter,
+                                section: Number.isInteger(index) ? index + 1 : null,
+                                sections: total,
+                                // Two bookmarks in one chapter look alike without the
+                                // words they sit on.
+                                excerpt: await excerpt(view, index, anchor),
+                            })
+                        }
+                        send({ type: 'CfisDescribed', described })
+                    })
+                    .catch(showReaderError)
+                return
+            }
             if (command.type === 'GoToHref'
                 && Object.keys(command).length === 2
                 && typeof command.href === 'string' && command.href.length <= 2048) {
@@ -380,6 +409,28 @@ function secureBookContent(book) {
         event.detail.data = Promise.resolve(event.detail.data)
             .then(data => sanitizeDocument(data, event.detail.type))
     })
+}
+
+/**
+ * The words a CFI points at, for a bookmark list that reads like the book.
+ * ponytail: loads the section document per bookmark; cache by section if a library
+ * of hundreds of bookmarks in one book ever makes opening the list slow.
+ */
+async function excerpt(view, index, anchor) {
+    if (!Number.isInteger(index) || typeof anchor !== 'function') return ''
+    try {
+        const doc = await view.book.sections[index].createDocument()
+        const found = anchor(doc)
+        const range = found instanceof Range ? found : doc.createRange()
+        if (!(found instanceof Range) && found) range.selectNodeContents(found)
+        // A bookmark is a point, not a span, so read on from where it sits.
+        const after = doc.createRange()
+        after.setStart(range.startContainer, range.startOffset)
+        after.setEnd(doc.body, doc.body.childNodes.length)
+        return text(after.toString()).slice(0, 120)
+    } catch {
+        return ''
+    }
 }
 
 /** Pinch zoom for PDF and comics; foliate re-renders PDF pages at the new scale. */

@@ -207,7 +207,7 @@ private const val SYNC_FILE_PREFIX = "sync-file-"
 private const val KEEP_COLORS_KEY = "keep-colors"
 
 /** Reader typography, shared by every book. */
-private data class Typography(
+internal data class Typography(
     val fontScale: Int = 100,
     val lineHeight: Float = 1.5f,
     val margin: Int = 48,
@@ -222,7 +222,7 @@ private data class Typography(
 }
 
 /** Two low-glare reading themes: grey on white, and white on grey. */
-private enum class ReaderTheme(
+internal enum class ReaderTheme(
     val label: String,
     val background: Color,
     val foreground: Color,
@@ -467,6 +467,7 @@ private fun BooksApp() {
                                 keepColors = keepColors,
                                 typography = typography,
                                 onBack = if (pinned) null else ({ showLibrary = true }),
+                                onUnreadable = { removeBook(selectedBook) },
                                 onPanels = { panels = it },
                                 modifier = Modifier.weight(1f).fillMaxHeight(),
                             )
@@ -521,6 +522,10 @@ private fun BooksApp() {
                         keepColors = keepColors,
                         typography = typography,
                         onBack = { selectedBookId = null },
+                        onUnreadable = {
+                            selectedBookId = null
+                            removeBook(selectedBook)
+                        },
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -531,7 +536,7 @@ private fun BooksApp() {
 
 /** Library, chapters and annotations side by side with the page, one tab each. */
 @Composable
-private fun Sidebar(
+internal fun Sidebar(
     panels: ReaderPanels?,
     theme: ReaderTheme,
     /** Floating over the page (unpinned) it lets the text show through; pinned it is solid. */
@@ -783,7 +788,7 @@ private fun CoverThumbnail(coverPath: String?) {
 
 /** What Foliate shows in its book properties, with the identifiers we keep. */
 @Composable
-private fun BookDetailsDialog(
+internal fun BookDetailsDialog(
     book: BookEntity,
     onRemove: () -> Unit,
     onDismiss: () -> Unit,
@@ -831,7 +836,7 @@ private fun Long.asDate(): String =
         .format(java.util.Date(this))
 
 @Composable
-private fun SettingsDialog(
+internal fun SettingsDialog(
     scrolled: Boolean,
     onSetScrolled: (Boolean) -> Unit,
     theme: ReaderTheme,
@@ -942,7 +947,7 @@ private fun EmptyReader(modifier: Modifier = Modifier) {
  * What the open book can offer a panel outside the reader. On a tablet the sidebar draws
  * these itself, so the chapters and annotations live next to the page instead of over it.
  */
-private class ReaderPanels(
+internal class ReaderPanels(
     val toc: List<TocEntry>,
     val annotations: List<JSONObject>,
     val openHref: (String) -> Unit,
@@ -966,6 +971,8 @@ private fun ReaderScreen(
     keepColors: Boolean,
     typography: Typography,
     onBack: (() -> Unit)?,
+    /** Called when the file turns out not to be a book we can open at all. */
+    onUnreadable: (() -> Unit)? = null,
     /** Set on a tablet: the sidebar takes over chapters and annotations. */
     onPanels: ((ReaderPanels) -> Unit)? = null,
     modifier: Modifier = Modifier,
@@ -986,6 +993,8 @@ private fun ReaderScreen(
     var fixedLayout by remember(book.id) { mutableStateOf(false) }
     var showChapters by remember(book.id) { mutableStateOf(false) }
     var showBookmarks by remember(book.id) { mutableStateOf(false) }
+    // cfi → "Chapter · Section 4 of 143", filled in by the reader on demand.
+    var cfiLabels by remember(book.id) { mutableStateOf(emptyMap<String, String>()) }
     var showAnnotations by remember(book.id) { mutableStateOf(false) }
     var selectionLower by remember(book.id) { mutableStateOf(true) }
     var openedAnnotation by remember(book.id) { mutableStateOf<JSONObject?>(null) }
@@ -1199,6 +1208,17 @@ private fun ReaderScreen(
                 onReaderError = {
                     error = it
                     readerReady = false
+                    // A file that never opened and holds nothing of its own is not a
+                    // book: drop it instead of leaving an "Opening book…" row behind.
+                    // A book that has been read keeps its place, its bookmarks and its
+                    // annotations even if today the file is missing or unreadable.
+                    if (book.title.isBlank() &&
+                        book.lastCfi == null &&
+                        book.bookmarks.toCfiList().isEmpty() &&
+                        book.annotations.toAnnotations().isEmpty()
+                    ) {
+                        onUnreadable?.invoke()
+                    }
                 },
                 onTapped = {
                     chromeVisible = !chromeVisible
@@ -1212,6 +1232,7 @@ private fun ReaderScreen(
                     selectionLower = lower
                 },
                 onSelectionCleared = { selection = null },
+                onCfisDescribed = { cfiLabels = cfiLabels + it },
                 onTapPage = { forward -> sendCommand(if (forward) "Next" else "Previous") },
                 // No inset: the chrome floats over the page, so the text never reflows
                 // when it appears.
@@ -1351,8 +1372,18 @@ private fun ReaderScreen(
         }
 
         if (showBookmarks) {
+            LaunchedEffect(bookmarks, readerReady) {
+                if (readerReady && bookmarks.isNotEmpty()) {
+                    send(
+                        JSONObject()
+                            .put("type", "DescribeCfis")
+                            .put("cfis", JSONArray(bookmarks)),
+                    )
+                }
+            }
             BookmarksDialog(
                 bookmarks = bookmarks,
+                labels = cfiLabels,
                 onOpen = { cfi ->
                     showBookmarks = false
                     send(JSONObject().put("type", "GoToCfi").put("cfi", cfi))
@@ -1533,7 +1564,7 @@ private fun highlightSwatch(name: String): Color? =
 
 /** Colours, note and copy for the current selection; `null` colour clears the highlight. */
 @Composable
-private fun SelectionPanel(
+internal fun SelectionPanel(
     excerpt: String,
     note: String,
     onHighlight: (String?, String) -> Unit,
@@ -1617,7 +1648,7 @@ private fun SelectionPanel(
 
 /** Quick look at a highlight's note. Deleting lives in the annotations list. */
 @Composable
-private fun AnnotationNoteDialog(
+internal fun AnnotationNoteDialog(
     annotation: JSONObject,
     onDismiss: () -> Unit,
 ) {
@@ -1914,7 +1945,7 @@ private fun ScreenHeader(
 }
 
 @Composable
-private fun ChaptersScreen(
+internal fun ChaptersScreen(
     toc: List<TocEntry>,
     onBack: (() -> Unit)?,
     onOpen: (String) -> Unit,
@@ -1946,8 +1977,9 @@ private fun ChaptersScreen(
 }
 
 @Composable
-private fun BookmarksDialog(
+internal fun BookmarksDialog(
     bookmarks: List<String>,
+    labels: Map<String, String>,
     onOpen: (String) -> Unit,
     onRemove: (String) -> Unit,
     onDismiss: () -> Unit,
@@ -1967,12 +1999,23 @@ private fun BookmarksDialog(
                             Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
-                            Text(
-                                text = "Saved page ${index + 1}",
-                                modifier = Modifier.weight(1f)
+                            Column(
+                                Modifier.weight(1f)
                                     .clickable { onOpen(cfi) }
                                     .padding(vertical = 12.dp),
-                            )
+                            ) {
+                                val label = labels[cfi]
+                                Text(label?.substringBefore(" · ")
+                                    ?: "Saved page ${index + 1}")
+                                label?.substringAfter(" · ", "")?.takeIf { it.isNotBlank() }
+                                    ?.let {
+                                        Text(
+                                            it,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                            }
                             TextButton(onClick = { onRemove(cfi) }) { Text("Remove") }
                         }
                         HorizontalDivider()
@@ -2233,7 +2276,7 @@ private fun ChromeIsland(
     )
 }
 
-private data class TocEntry(val label: String, val href: String, val depth: Int)
+internal data class TocEntry(val label: String, val href: String, val depth: Int)
 
 private fun JSONArray?.toTocEntries(): List<TocEntry> {
     val array = this ?: return emptyList()
@@ -2247,6 +2290,30 @@ private fun JSONArray?.toTocEntries(): List<TocEntry> {
             depth = item.optInt("depth", 0).coerceIn(0, 5),
         )
     }
+}
+
+/** "Chapter · Section 4 of 143" per CFI, so a bookmark says where in the book it is. */
+internal fun JSONArray?.toCfiLabels(): Map<String, String> {
+    val array = this ?: return emptyMap()
+    return (0 until array.length()).mapNotNull { index ->
+        val item = array.optJSONObject(index) ?: return@mapNotNull null
+        val cfi = item.optString("cfi").takeIf { it.startsWith("epubcfi(") }
+            ?: return@mapNotNull null
+        val chapter = item.optString("chapter").normalizedText()
+        val excerpt = item.optString("excerpt").normalizedText()
+        val section = item.optInt("section", 0).takeIf { it > 0 }
+        val sections = item.optInt("sections", 0).takeIf { it > 0 }
+        val where = when {
+            section != null && sections != null -> "Section $section of $sections"
+            section != null -> "Section $section"
+            else -> ""
+        }
+        val label = listOf(
+            chapter.ifBlank { "Untitled chapter" },
+            listOf(where, excerpt).filter(String::isNotBlank).joinToString(" — "),
+        ).filter(String::isNotBlank).joinToString(" · ")
+        cfi to label
+    }.toMap()
 }
 
 /** Foliate annotation records, kept as JSON so unknown fields survive round trips. */
@@ -2296,6 +2363,7 @@ private fun ReaderView(
     onAnnotationTapped: (String) -> Unit,
     onSelected: (String, String, Boolean) -> Unit,
     onSelectionCleared: () -> Unit,
+    onCfisDescribed: (Map<String, String>) -> Unit,
     onTapPage: (Boolean) -> Unit,
     onRelocated: (String, Double?, Int?, Int?, String, String) -> Unit,
     onReaderError: (String) -> Unit,
@@ -2338,14 +2406,19 @@ private fun ReaderView(
             // Keep the selection handles, drop the system Copy/Share items: the
             // action mode still runs, it just gets an empty menu.
             object : WebView(context) {
+                // The action mode also dies when the selection panel takes focus — the
+                // note field does exactly that. Only a tap that left focus on the page
+                // means the reader dropped the selection.
+                private val clearIfStillOnThePage = { if (hasFocus()) onSelectionCleared() }
+
                 override fun startActionMode(callback: ActionMode.Callback?): ActionMode? =
-                    super.startActionMode(EmptyMenu(callback, onSelectionCleared))
+                    super.startActionMode(EmptyMenu(callback, clearIfStillOnThePage))
 
                 override fun startActionMode(
                     callback: ActionMode.Callback?,
                     type: Int,
                 ): ActionMode? =
-                    super.startActionMode(EmptyMenu(callback, onSelectionCleared), type)
+                    super.startActionMode(EmptyMenu(callback, clearIfStillOnThePage), type)
             }.apply {
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 isVerticalScrollBarEnabled = false
@@ -2404,6 +2477,9 @@ private fun ReaderView(
                             }
                         }
                         "SelectionCleared" -> onSelectionCleared()
+                        "CfisDescribed" -> onCfisDescribed(
+                            data.optJSONArray("described").toCfiLabels(),
+                        )
                         "TappedPrevious" -> onTapPage(false)
                         "TappedNext" -> onTapPage(true)
                         "ReaderError" -> onReaderError(
