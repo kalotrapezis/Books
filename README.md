@@ -12,7 +12,7 @@ This is an independent project. It is not an official Foliate application.
 No DRM. No network permission.
 
 - Branch: `android-dev`
-- Version: 0.0.3
+- Version: 0.0.4
 - Licence: `GPL-3.0-or-later`
 
 ## Screenshots
@@ -102,6 +102,22 @@ The second command needs a device or emulator. On MIUI/HyperOS also enable
 Developer options → Install via USB.
 
 ## Changelog
+
+### 0.0.4 — 2026-07-28
+
+Sync gets a shape you can drop files into.
+
+- The synced folder holds one directory per book, named after the book, with
+  `annotations.json` inside. Any `.json` dropped in is read, so an export named
+  something else still arrives; the newest one wins.
+- The folder is chosen once for the whole library instead of a file per book,
+  and a book opened after a file lands in its folder offers the import itself.
+- Deletions survive a sync. Removing a highlight used to be undone by the next
+  merge, because the other side still had it; the removal is now recorded and
+  carried across.
+- Before anything is merged into a book, its current data is copied aside.
+- Writing a note gives the panel to itself: Copy, Cite, Share and the lookups do
+  not fit beside Save and Cancel on a phone.
 
 ### 0.0.3 — 2026-07-28
 
