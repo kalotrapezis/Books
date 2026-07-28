@@ -1800,10 +1800,14 @@ internal fun SelectionPanel(
                     )
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(onClick = { onLookUp("dictionary") }) { Text("Dictionary") }
-                TextButton(onClick = { onLookUp("wikipedia") }) { Text("Wikipedia") }
-                TextButton(onClick = { onLookUp("translate") }) { Text("Translate") }
+            // Writing a note, everything else steps out of the way: the whole row of
+            // actions does not fit beside Save and Cancel on a phone.
+            if (!writing) {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { onLookUp("dictionary") }) { Text("Dictionary") }
+                    TextButton(onClick = { onLookUp("wikipedia") }) { Text("Wikipedia") }
+                    TextButton(onClick = { onLookUp("translate") }) { Text("Translate") }
+                }
             }
             if (writing) {
                 OutlinedTextField(
@@ -1817,17 +1821,20 @@ internal fun SelectionPanel(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                TextButton(onClick = onCopy) { Text("Copy") }
-                TextButton(onClick = onCite) { Text("Cite") }
-                TextButton(onClick = onShare) { Text("Share") }
-                TextButton(onClick = { writing = true }) {
-                    Text(if (note.isBlank()) "Note" else "Edit note")
-                }
-                Spacer(Modifier.weight(1f))
                 if (writing) {
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = { writing = false }) { Text("Cancel") }
                     TextButton(onClick = { onHighlight("yellow", draft) }) { Text("Save") }
+                } else {
+                    TextButton(onClick = onCopy) { Text("Copy") }
+                    TextButton(onClick = onCite) { Text("Cite") }
+                    TextButton(onClick = onShare) { Text("Share") }
+                    TextButton(onClick = { writing = true }) {
+                        Text(if (note.isBlank()) "Note" else "Edit note")
+                    }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
                 }
-                TextButton(onClick = onDismiss) { Text("Cancel") }
             }
         }
     }
