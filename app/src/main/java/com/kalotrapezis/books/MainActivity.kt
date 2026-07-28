@@ -119,6 +119,13 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -546,7 +553,8 @@ internal fun Sidebar(
 ) {
     var tab by rememberSaveable { mutableStateOf(0) }
     // A closed book has nothing to show in the other two tabs.
-    val tabs = if (panels == null) listOf("Library") else listOf("Library", "Chapters", "Notes")
+    val tabs = if (panels == null) listOf("Library")
+    else listOf("Library", "Chapters", "Notes", "Search")
     val current = tab.coerceIn(0, tabs.lastIndex)
     // Floating, it is the same island as the reader chrome: barely translucent, thin
     // border, rounded — legibility first.
@@ -583,6 +591,15 @@ internal fun Sidebar(
                         notice = panels.notice,
                         onOpen = panels.openCfi,
                         onRemove = panels.removeAnnotation,
+                        color = Color.Transparent,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    current == 3 && panels != null -> SearchScreen(
+                        results = panels.searchResults,
+                        searching = panels.searching,
+                        onSearch = panels.onSearch,
+                        onOpen = panels.openCfi,
+                        onBack = null,
                         color = Color.Transparent,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -959,6 +976,18 @@ internal class ReaderPanels(
     val onSyncWrite: () -> Unit,
     val syncLabel: String,
     val notice: String,
+    val searchResults: List<SearchHit>,
+    val searching: Boolean,
+    val onSearch: (String) -> Unit,
+)
+
+/** One hit from the reader's own search, with enough context to recognise it. */
+internal data class SearchHit(
+    val cfi: String,
+    val chapter: String,
+    val pre: String,
+    val match: String,
+    val post: String,
 )
 
 @Composable
@@ -995,6 +1024,9 @@ private fun ReaderScreen(
     var showBookmarks by remember(book.id) { mutableStateOf(false) }
     // cfi → "Chapter · Section 4 of 143", filled in by the reader on demand.
     var cfiLabels by remember(book.id) { mutableStateOf(emptyMap<String, String>()) }
+    var searchResults by remember(book.id) { mutableStateOf(emptyList<SearchHit>()) }
+    var searching by remember(book.id) { mutableStateOf(false) }
+    var showSearch by remember(book.id) { mutableStateOf(false) }
     var showAnnotations by remember(book.id) { mutableStateOf(false) }
     var selectionLower by remember(book.id) { mutableStateOf(true) }
     var openedAnnotation by remember(book.id) { mutableStateOf<JSONObject?>(null) }
@@ -1008,6 +1040,16 @@ private fun ReaderScreen(
             .onFailure { error = "Reader command failed: ${it.message ?: "unknown error"}" }
     }
     val sendCommand: (String) -> Unit = { type -> send(JSONObject().put("type", type)) }
+    val runSearch: (String) -> Unit = { query ->
+        searchResults = emptyList()
+        if (query.isBlank()) {
+            searching = false
+            sendCommand("ClearSearch")
+        } else {
+            searching = true
+            send(JSONObject().put("type", "Search").put("query", query))
+        }
+    }
     var transferNotice by remember(book.id) { mutableStateOf("") }
     val preferences = remember(readerContext) {
         readerContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
@@ -1233,11 +1275,30 @@ private fun ReaderScreen(
                 },
                 onSelectionCleared = { selection = null },
                 onCfisDescribed = { cfiLabels = cfiLabels + it },
+                onSearchResults = { hits, done ->
+                    searchResults = searchResults + hits
+                    if (done) searching = false
+                },
                 onTapPage = { forward -> sendCommand(if (forward) "Next" else "Previous") },
                 // No inset: the chrome floats over the page, so the text never reflows
                 // when it appears.
                 modifier = Modifier.fillMaxSize(),
             )
+        }
+
+        if (showSearch) {
+            SearchScreen(
+                results = searchResults,
+                searching = searching,
+                onSearch = runSearch,
+                onOpen = { cfi ->
+                    showSearch = false
+                    send(JSONObject().put("type", "GoToCfi").put("cfi", cfi))
+                },
+                onBack = { showSearch = false },
+                modifier = Modifier.fillMaxSize(),
+            )
+            return@Box
         }
 
         if (showChapters) {
@@ -1335,6 +1396,9 @@ private fun ReaderScreen(
                 onSyncWrite = { syncUri?.let(writeSyncFile) },
                 syncLabel = if (syncUri == null) "Choose sync file" else "Sync now",
                 notice = transferNotice,
+                searchResults = searchResults,
+                searching = searching,
+                onSearch = runSearch,
             )
             SideEffect { onPanels(panels) }
         }
@@ -1509,7 +1573,8 @@ private fun ReaderScreen(
                     TextButton(onClick = { showChapters = true }, enabled = toc.isNotEmpty()) {
                         Text("Chapters")
                     }
-                    TextButton(onClick = { showAnnotations = true }) { Text("Annotations") }
+                    TextButton(onClick = { showAnnotations = true }) { Text("Notes") }
+                    TextButton(onClick = { showSearch = true }) { Text("Search") }
                 }
             }
             if (!scrolling) {
@@ -1916,6 +1981,83 @@ private fun PillButton(label: String, onClick: () -> Unit, modifier: Modifier = 
     }
 }
 
+/** The reader's own search over the whole book: what it found, and where. */
+@Composable
+internal fun SearchScreen(
+    results: List<SearchHit>,
+    searching: Boolean,
+    onSearch: (String) -> Unit,
+    onOpen: (String) -> Unit,
+    onBack: (() -> Unit)?,
+    color: Color = Color.Unspecified,
+    modifier: Modifier = Modifier,
+) {
+    var query by rememberSaveable { mutableStateOf("") }
+    Surface(modifier, color = color.takeOrElse { MaterialTheme.colorScheme.surface }) {
+        Column {
+            ScreenHeader("Search", onBack)
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                singleLine = true,
+                label = { Text("Find in book") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { onSearch(query) }),
+                trailingIcon = {
+                    TextButton(onClick = { onSearch(query) }, enabled = query.length >= 2) {
+                        Text("Find")
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+            )
+            when {
+                searching && results.isEmpty() -> Text(
+                    "Searching…",
+                    modifier = Modifier.padding(16.dp),
+                )
+                !searching && results.isEmpty() && query.length >= 2 -> Text(
+                    "Nothing found.",
+                    modifier = Modifier.padding(16.dp),
+                )
+            }
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 72.dp),
+            ) {
+                items(results.size) { index ->
+                    val hit = results[index]
+                    Column(
+                        Modifier.fillMaxWidth()
+                            .clickable { onOpen(hit.cfi) }
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                    ) {
+                        if (hit.chapter.isNotBlank()) {
+                            Text(
+                                hit.chapter,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Text(
+                            buildAnnotatedString {
+                                append(hit.pre)
+                                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                                    append(hit.match)
+                                }
+                                append(hit.post)
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    HorizontalDivider()
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun ScreenHeader(
     title: String,
@@ -2292,6 +2434,22 @@ private fun JSONArray?.toTocEntries(): List<TocEntry> {
     }
 }
 
+private fun JSONArray?.toSearchHits(): List<SearchHit> {
+    val array = this ?: return emptyList()
+    return (0 until array.length()).mapNotNull { index ->
+        val item = array.optJSONObject(index) ?: return@mapNotNull null
+        val cfi = item.optString("cfi").takeIf { it.startsWith("epubcfi(") }
+            ?: return@mapNotNull null
+        SearchHit(
+            cfi = cfi,
+            chapter = item.optString("chapter").normalizedText(),
+            pre = item.optString("pre").normalizedText(),
+            match = item.optString("match").normalizedText(),
+            post = item.optString("post").normalizedText(),
+        )
+    }
+}
+
 /** "Chapter · Section 4 of 143" per CFI, so a bookmark says where in the book it is. */
 internal fun JSONArray?.toCfiLabels(): Map<String, String> {
     val array = this ?: return emptyMap()
@@ -2364,6 +2522,7 @@ private fun ReaderView(
     onSelected: (String, String, Boolean) -> Unit,
     onSelectionCleared: () -> Unit,
     onCfisDescribed: (Map<String, String>) -> Unit,
+    onSearchResults: (List<SearchHit>, Boolean) -> Unit,
     onTapPage: (Boolean) -> Unit,
     onRelocated: (String, Double?, Int?, Int?, String, String) -> Unit,
     onReaderError: (String) -> Unit,
@@ -2479,6 +2638,10 @@ private fun ReaderView(
                         "SelectionCleared" -> onSelectionCleared()
                         "CfisDescribed" -> onCfisDescribed(
                             data.optJSONArray("described").toCfiLabels(),
+                        )
+                        "SearchResults" -> onSearchResults(
+                            data.optJSONArray("results").toSearchHits(),
+                            data.optBoolean("done", true),
                         )
                         "TappedPrevious" -> onTapPage(false)
                         "TappedNext" -> onTapPage(true)

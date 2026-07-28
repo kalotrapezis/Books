@@ -258,6 +258,9 @@ class ModalsTest {
                         onSyncWrite = {},
                         syncLabel = "Sync",
                         notice = "",
+                        searchResults = emptyList(),
+                        searching = false,
+                        onSearch = {},
                     ),
                     theme = ReaderTheme.GREY_ON_WHITE,
                     modifier = Modifier,
@@ -271,6 +274,49 @@ class ModalsTest {
         compose.onNodeWithText("highlighted").assertIsDisplayed()
         compose.onNodeWithText("Library").performClick()
         compose.onNodeWithText("the library").assertIsDisplayed()
+    }
+
+    @Test
+    fun searchAsksAndOpensWhatItFinds() {
+        var asked: String? = null
+        var opened: String? = null
+        compose.setContent {
+            MaterialTheme {
+                SearchScreen(
+                    results = listOf(
+                        SearchHit(
+                            cfi = "epubcfi(/6/4!/4/2:0)",
+                            chapter = "Chapter One",
+                            pre = "before ",
+                            match = "needle",
+                            post = " after",
+                        ),
+                    ),
+                    searching = false,
+                    onSearch = { asked = it },
+                    onOpen = { opened = it },
+                    onBack = null,
+                )
+            }
+        }
+
+        compose.onNode(hasSetTextAction()).performTextReplacement("needle")
+        compose.onNodeWithText("Find").performClick()
+        assertEquals("needle", asked)
+
+        compose.onNodeWithText("Chapter One").assertIsDisplayed()
+        compose.onNodeWithText("before needle after").performClick()
+        assertEquals("epubcfi(/6/4!/4/2:0)", opened)
+    }
+
+    @Test
+    fun searchSaysWhenItIsWorkingAndWhenItFoundNothing() {
+        compose.setContent {
+            MaterialTheme {
+                SearchScreen(emptyList(), searching = true, onSearch = {}, onOpen = {}, onBack = null)
+            }
+        }
+        compose.onNodeWithText("Searching…").assertIsDisplayed()
     }
 
     @Test

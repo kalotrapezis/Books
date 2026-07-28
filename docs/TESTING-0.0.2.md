@@ -77,6 +77,21 @@ already; the rest need your real device and real files.
 29. Select a word, then long press another word: the new selection is reported
     and the panel follows it.
 
+## F. Search, and the two fixes after 0.0.2
+
+30. Sidebar → Search, type two letters or more, Find: results list with the
+    chapter and the words around the match, and every hit outlined in the page.
+    Tapping one goes there.
+31. A second search replaces the first; an empty box clears the outlines.
+32. On a phone, Search is in the bottom pill next to Chapters and Notes.
+33. Select a word and press Note: the panel stays open with the field. This was
+    broken in 0.0.2 — the field took focus, the WebView lost it, and the panel
+    went with it.
+34. Add a file that is not a book: the error shows and it does not stay in the
+    library. A book you have read keeps its row even if its file is gone.
+35. Long press the ribbon: each bookmark says its chapter, its section and the
+    words it sits on, instead of "Saved page 1".
+
 ## Known gaps, not bugs to report
 
 - A fixed-layout page (PDF, comic) is not centred in the pane and its bottom is

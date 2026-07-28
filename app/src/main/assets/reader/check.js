@@ -7,6 +7,11 @@ const annotations = new Map()
 let typography = null
 /** Fixed-layout zoom: null means fit the whole page, a number is a pinch scale. */
 let zoom = null
+/** A new search abandons the one still walking the book. */
+let searchToken = 0
+// ponytail: a hard cap, not paging. A search with thousands of hits is a search that
+// needs narrowing; add paging if a real book ever proves otherwise.
+const MAX_SEARCH_RESULTS = 300
 
 const send = message => globalThis.booksBridge?.postMessage(JSON.stringify(message))
 const text = value => typeof value === 'string'
@@ -101,6 +106,12 @@ try {
             if (!doc) return
             let start = null
             let swiped = false
+            // foliate moves the caret with the page when it navigates (the paginator's
+            // setSelectionTo), so a bare selectionchange is not proof that the reader
+            // selected anything. A touch on the page starts one; the changes after that
+            // are its handles being dragged.
+            let touchedAt = 0
+            let reporting = false
             let pinchStart = null
             const spread = event => Math.hypot(
                 event.touches[0].clientX - event.touches[1].clientX,
@@ -116,6 +127,7 @@ try {
                 const touch = event.touches[0]
                 start = touch ? { x: touch.clientX, y: touch.clientY } : null
                 swiped = false
+                touchedAt = Date.now()
             }, { passive: true })
             doc.addEventListener('touchmove', event => {
                 if (!pinchStart || event.touches.length !== 2) return
@@ -156,6 +168,9 @@ try {
             }, { passive: true })
             doc.addEventListener('selectionchange', () => {
                 const selection = doc.defaultView?.getSelection()
+                if (selection?.isCollapsed === false && !reporting
+                    && Date.now() - touchedAt > 2000) return
+                reporting = selection?.isCollapsed === false
                 if (!selection || selection.isCollapsed) return
                 const range = selection.getRangeAt(0)
                 const cfi = view.getCFI(detail.index, range)
@@ -334,6 +349,53 @@ try {
                         send({ type: 'CfisDescribed', described })
                     })
                     .catch(showReaderError)
+                return
+            }
+            // foliate-js searches the whole book itself and highlights what it finds.
+            // Results arrive section by section, so they are sent in batches and the
+            // list fills as they come instead of after the last chapter.
+            if (command.type === 'Search'
+                && Object.keys(command).length === 2
+                && typeof command.query === 'string'
+                && command.query.trim().length >= 2
+                && command.query.length <= 256) {
+                searchToken += 1
+                const token = searchToken
+                commandQueue = commandQueue
+                    .then(async () => {
+                        let batch = []
+                        let total = 0
+                        for await (const result of view.search({ query: command.query })) {
+                            if (token !== searchToken) return
+                            if (result === 'done' || !result.subitems) continue
+                            for (const item of result.subitems) {
+                                if (!validCfi(item.cfi)) continue
+                                batch.push({
+                                    cfi: item.cfi,
+                                    chapter: text(result.label),
+                                    pre: text(item.excerpt?.pre),
+                                    match: text(item.excerpt?.match),
+                                    post: text(item.excerpt?.post),
+                                })
+                                total += 1
+                            }
+                            if (batch.length >= 20) {
+                                send({ type: 'SearchResults', results: batch, done: false })
+                                batch = []
+                            }
+                            if (total >= MAX_SEARCH_RESULTS) break
+                        }
+                        if (token === searchToken) {
+                            send({ type: 'SearchResults', results: batch, done: true })
+                        }
+                    })
+                    .catch(showReaderError)
+                return
+            }
+            if (command.type === 'ClearSearch'
+                && Object.keys(command).length === 1) {
+                searchToken += 1
+                view.clearSearch()
                 return
             }
             if (command.type === 'GoToHref'

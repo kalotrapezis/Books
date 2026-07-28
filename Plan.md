@@ -353,6 +353,20 @@ random-access loader.
 - Calibre embedded highlights.
 - TalkBack, scalable text και accessibility tests.
 
+Τρέχουσα πρόοδος:
+
+- Αναζήτηση σε όλο το βιβλίο με τη μηχανή του `foliate-js`: τα αποτελέσματα
+  έρχονται ανά ενότητα σε παρτίδες, με κεφάλαιο και απόσπασμα, και το άγγιγμα
+  πηγαίνει στο CFI. Νέα αναζήτηση ακυρώνει την προηγούμενη· όριο 300 ευρήματα.
+  Καρτέλα «Search» στο sidebar του tablet, πλήρης οθόνη στο τηλέφωνο.
+- Copy/citation και dictionary/Wikipedia/translation υπάρχουν ήδη από τη Φάση 2.
+- Διορθώθηκε: όταν το `foliate-js` πλοηγείται, μετακινεί και τον δρομέα
+  (`setSelectionTo` του paginator), οπότε κάθε μετάβαση φαινόταν σαν επιλογή
+  κειμένου και άνοιγε το πάνελ. Πλέον αναφέρεται μόνο επιλογή που ξεκίνησε από
+  άγγιγμα στη σελίδα.
+- Εκκρεμούν: page list, landmarks, TTS, OPDS, image viewer, Calibre highlights,
+  accessibility.
+
 ### Φάση 5 — Backup και Linux/Foliate interoperability
 
 - Versioned manual backup/restore.
