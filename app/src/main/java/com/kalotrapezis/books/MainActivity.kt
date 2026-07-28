@@ -158,6 +158,7 @@ import com.kalotrapezis.books.data.ExportFormat
 import com.kalotrapezis.books.data.FoliateJson
 import com.kalotrapezis.books.data.toAnnotations
 import java.io.ByteArrayInputStream
+import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -1202,6 +1203,22 @@ private fun ReaderScreen(
     }
     val applyMerge: (FoliateJson.Merged) -> Unit = { merged ->
         persistenceScope.launch {
+            // Nothing is merged over without a copy of what was there first. App-private
+            // and dated, so a bad import is recoverable and the synced folder stays clean.
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val backups = File(readerContext.filesDir, "backups").apply { mkdirs() }
+                    val stamp = nowIso().replace(":", "-")
+                    File(backups, "${book.id}-$stamp.json").writeText(
+                        FoliateJson.export(book, book.foliateExtras, page, pages),
+                    )
+                    // Ten per book is plenty to walk back through.
+                    backups.listFiles { file -> file.name.startsWith("${book.id}-") }
+                        ?.sortedByDescending { it.name }
+                        ?.drop(10)
+                        ?.forEach { it.delete() }
+                }
+            }
             dao.applyImport(book.id, merged.annotations, merged.bookmarks, merged.extras)
             merged.annotations.toAnnotations().forEach {
                 send(
@@ -1478,7 +1495,12 @@ private fun ReaderScreen(
                 openCfi = { send(JSONObject().put("type", "GoToCfi").put("cfi", it)) },
                 removeAnnotation = { cfi ->
                     persistenceScope.launch {
-                        dao.updateAnnotations(book.id, removeAnnotation(annotations, cfi).toString())
+                        // A deletion is remembered, or the next merge brings it back.
+                        dao.updateAnnotations(
+                            book.id,
+                            removeAnnotation(annotations, cfi).toString(),
+                            FoliateJson.withTombstone(book.foliateExtras, cfi, nowIso()),
+                        )
                     }
                     send(JSONObject().put("type", "Unannotate").put("cfi", cfi))
                 },
@@ -1517,7 +1539,12 @@ private fun ReaderScreen(
                 },
                 onRemove = { cfi ->
                     persistenceScope.launch {
-                        dao.updateAnnotations(book.id, removeAnnotation(annotations, cfi).toString())
+                        // A deletion is remembered, or the next merge brings it back.
+                        dao.updateAnnotations(
+                            book.id,
+                            removeAnnotation(annotations, cfi).toString(),
+                            FoliateJson.withTombstone(book.foliateExtras, cfi, nowIso()),
+                        )
                     }
                     send(JSONObject().put("type", "Unannotate").put("cfi", cfi))
                 },
@@ -2740,10 +2767,7 @@ private fun addAnnotation(
     text: String,
     note: String = "",
 ): JSONArray {
-    // ISO-8601 UTC like Foliate writes; java.time needs API 26, this works on API 24.
-    val now = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US)
-        .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
-        .format(java.util.Date())
+    val now = nowIso()
     val previous = existing.firstOrNull { it.optString("value") == cfi }
     val kept = existing.filterNot { it.optString("value") == cfi }
     if (color == null) return JSONArray(kept.toList())
@@ -2756,6 +2780,12 @@ private fun addAnnotation(
         .put("modified", now)
     return JSONArray((kept + record).toList())
 }
+
+/** ISO-8601 UTC like Foliate writes; java.time needs API 26, this works on API 24. */
+private fun nowIso(): String =
+    java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US)
+        .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+        .format(java.util.Date())
 
 private fun String?.toCfiList(): List<String> = runCatching {
     val array = JSONArray(this ?: "[]")

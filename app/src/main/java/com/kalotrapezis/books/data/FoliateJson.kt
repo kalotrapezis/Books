@@ -8,6 +8,14 @@ import org.json.JSONObject
  * untouched, so a round trip never drops anything Foliate wrote.
  */
 object FoliateJson {
+    /**
+     * Deletions, kept in a field of our own inside the file. Foliate carries unknown
+     * fields through untouched, exactly as we do, so a tombstone survives a round trip
+     * through it. Without them a merge quietly brings back everything you deleted: the
+     * other side still has the annotation, and having it beats not having it.
+     */
+    const val TOMBSTONES = "booksDeleted"
+
     fun export(book: BookEntity, extras: String?, page: Int? = null, pages: Int? = null): String {
         val root = extras?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject()
         val metadata = root.optJSONObject("metadata") ?: JSONObject()
@@ -42,12 +50,24 @@ object FoliateJson {
         val theirs = root.optJSONArray("annotations").toObjects()
         val byValue = LinkedHashMap<String, JSONObject>()
         for (item in mine) byValue[item.optString("value")] = item
+        // Both sides' tombstones, newest wins, and they outlive the merge itself.
+        val graves = LinkedHashMap<String, String>()
+        for (side in listOf((book.foliateExtras ?: "{}").toGraves(), root.toGraves())) {
+            for ((value, deleted) in side) {
+                if (deleted >= (graves[value] ?: "")) graves[value] = deleted
+            }
+        }
         for (item in theirs) {
             val key = item.optString("value").ifBlank { continue }
             val existing = byValue[key]
             if (existing == null || item.optString("modified") >= existing.optString("modified")) {
                 byValue[key] = item
             }
+        }
+        // A deletion beats an annotation that has not been touched since it was deleted.
+        for ((value, deleted) in graves) {
+            val kept = byValue[value] ?: continue
+            if (kept.optString("modified") <= deleted) byValue.remove(value)
         }
 
         val bookmarks = LinkedHashSet((book.bookmarks ?: "[]").toCfis())
@@ -59,6 +79,7 @@ object FoliateJson {
             remove("bookmarks")
             remove("lastLocation")
             remove("progress")
+            put(TOMBSTONES, JSONObject(graves.mapValues { it.value }))
         }
         return Merged(
             annotations = JSONArray(byValue.values.toList()).toString(),
@@ -68,6 +89,14 @@ object FoliateJson {
         )
     }
 
+    /** Records a deletion so a later merge does not undo it. */
+    fun withTombstone(extras: String?, value: String, deletedAt: String): String {
+        val root = extras?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject()
+        val graves = root.optJSONObject(TOMBSTONES) ?: JSONObject()
+        graves.put(value, deletedAt)
+        return root.put(TOMBSTONES, graves).toString()
+    }
+
     data class Merged(
         val annotations: String,
         val bookmarks: String,
@@ -75,6 +104,16 @@ object FoliateJson {
         val extras: String,
     )
 }
+
+/** value → when it was deleted. */
+private fun JSONObject.toGraves(): Map<String, String> {
+    val graves = optJSONObject(FoliateJson.TOMBSTONES) ?: return emptyMap()
+    return graves.keys().asSequence().associateWith { graves.optString(it) }
+        .filterValues { it.isNotBlank() }
+}
+
+private fun String.toGraves(): Map<String, String> =
+    runCatching { JSONObject(this) }.getOrNull()?.toGraves() ?: emptyMap()
 
 internal fun String.toAnnotations(): List<JSONObject> =
     runCatching { JSONArray(this) }.getOrNull().toObjects()

@@ -133,6 +133,15 @@ already; the rest need your real device and real files.
 49. Two books with the same title share a directory — the identifier warning is
     what catches it. Rename one if it ever happens to you.
 
+## I. Deletions
+
+50. Delete a highlight, then sync against a file that still has it: it stays
+    deleted. Before this, every merge brought back everything you had deleted.
+51. Delete a highlight on the phone, edit the same one on the desktop after
+    that, then sync: the edited one comes back. Newer wins, deletion included.
+52. Nothing else in the file is disturbed — Foliate's own fields still round
+    trip untouched.
+
 ## Known gaps, not bugs to report
 
 - A fixed-layout page (PDF, comic) is not centred in the pane and its bottom is

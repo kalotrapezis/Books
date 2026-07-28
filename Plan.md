@@ -400,6 +400,19 @@ random-access loader.
 - Linux helper για progress/bookmarks.
 - WebDAV/Nextcloud μόνο αφού αποδειχθεί το τοπικό merge.
 
+Τρέχουσα πρόοδος:
+
+- Tombstones: η διαγραφή ενός highlight καταγράφεται στο πεδίο `booksDeleted`
+  μέσα στο ίδιο το αρχείο. Το Foliate μεταφέρει άγνωστα πεδία αυτούσια, όπως
+  κάνουμε κι εμείς, οπότε η διαγραφή επιβιώνει και του round trip. Χωρίς αυτό
+  κάθε merge επανέφερε ό,τι είχε διαγραφεί: η άλλη πλευρά το είχε ακόμη, και το
+  «το έχω» νικούσε πάντα το «δεν το έχω». Ένα highlight που πειράχτηκε μετά τη
+  διαγραφή επιστρέφει κανονικά.
+- Backup πριν από κάθε merge: αντίγραφο της τρέχουσας κατάστασης του βιβλίου σε
+  app-private φάκελο με ημερομηνία, τα δέκα τελευταία ανά βιβλίο.
+- Εκκρεμούν: versioned backup/restore όλης της βιβλιοθήκης, Linux helper για
+  progress/bookmarks, WebDAV/Nextcloud.
+
 ### Φάση 6 — Σταθεροποίηση και release
 
 - Unit, lint, UI και accessibility tests.

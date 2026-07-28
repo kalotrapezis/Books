@@ -108,6 +108,9 @@ abstract class BookDao {
     @Query("UPDATE books SET annotations = :annotations WHERE id = :id")
     abstract suspend fun updateAnnotations(id: String, annotations: String?)
 
+    @Query("UPDATE books SET annotations = :annotations, foliateExtras = :extras WHERE id = :id")
+    abstract suspend fun updateAnnotations(id: String, annotations: String?, extras: String)
+
     @Query("""
         UPDATE books SET annotations = :annotations, bookmarks = :bookmarks,
         foliateExtras = :extras WHERE id = :id
