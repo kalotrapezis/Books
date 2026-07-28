@@ -139,6 +139,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.JavaScriptReplyProxy
@@ -1064,6 +1065,11 @@ private fun ReaderScreen(
     // Android's own voice reads what the reader hands over, one block at a time, and
     // asks for the next one when it runs out. No network: the engine is on the device.
     val speech = rememberSpeech(onSpoken = { if (speaking) speakCommand("next") })
+    val toggleSpeaking: () -> Unit = {
+        speaking = !speaking
+        speakCommand(if (speaking) "start" else "stop")
+        if (!speaking) speech.stop()
+    }
     val runSearch: (String) -> Unit = { query ->
         searchResults = emptyList()
         if (query.isBlank()) {
@@ -1302,6 +1308,10 @@ private fun ReaderScreen(
                 onSelected = { cfi, selectedText, lower ->
                     selection = cfi to selectedText
                     selectionLower = lower
+                    // Selecting must not cost you the controls: without this a stray
+                    // tap before the selection leaves the panel with no way back to
+                    // read aloud, bookmarks or the seek bar.
+                    chromeVisible = true
                 },
                 onSelectionCleared = { selection = null },
                 onCfisDescribed = { cfiLabels = cfiLabels + it },
@@ -1525,11 +1535,7 @@ private fun ReaderScreen(
                 },
                 onShowBookmarks = { showBookmarks = true },
                 speaking = speaking,
-                onToggleSpeaking = {
-                    speaking = !speaking
-                    speakCommand(if (speaking) "start" else "stop")
-                    if (!speaking) speech.stop()
-                },
+                onToggleSpeaking = toggleSpeaking,
             )
         }
         val current = selection
@@ -1637,6 +1643,8 @@ private fun ReaderScreen(
                     onSeek = {
                         send(JSONObject().put("type", "GoToFraction").put("fraction", it))
                     },
+                    speaking = speaking,
+                    onToggleSpeaking = toggleSpeaking,
                 )
             }
           }
@@ -2375,12 +2383,7 @@ internal fun ReaderTopBar(
                     Text(error, color = MaterialTheme.colorScheme.error, maxLines = 2)
                 }
             }
-            IconButton(onClick = onToggleSpeaking) {
-                Icon(
-                    if (speaking) Icons.Filled.Close else Icons.Filled.PlayArrow,
-                    contentDescription = if (speaking) "Stop reading aloud" else "Read aloud",
-                )
-            }
+            SpeakButton(speaking, onToggleSpeaking, Modifier.padding(end = 8.dp))
             Ribbon(
                 filled = bookmarked,
                 label = if (bookmarked) "Remove this bookmark, long press for the list"
@@ -2392,7 +2395,7 @@ internal fun ReaderTopBar(
                         onLongClick = onShowBookmarks,
                         onLongClickLabel = "Show saved pages",
                     )
-                    .padding(horizontal = 12.dp)
+                    .padding(start = 8.dp, end = 16.dp)
                     .size(width = 24.dp, height = 40.dp),
             )
         }
@@ -2400,6 +2403,34 @@ internal fun ReaderTopBar(
 }
 
 /** Bookmark ribbon: a rectangle with a notch cut out of the bottom edge. */
+/**
+ * Read aloud, as a filled circle: the same control in the top bar and in the island
+ * under the page, so it is in reach whether or not the top bar is showing.
+ */
+@Composable
+private fun SpeakButton(
+    speaking: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+    size: Dp = 40.dp,
+) {
+    Surface(
+        onClick = onToggle,
+        modifier = modifier.size(size),
+        shape = CircleShape,
+        color = if (speaking) MaterialTheme.colorScheme.primary
+        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f),
+    ) {
+        Icon(
+            if (speaking) Icons.Filled.Close else Icons.Filled.PlayArrow,
+            contentDescription = if (speaking) "Stop reading aloud" else "Read aloud",
+            tint = if (speaking) MaterialTheme.colorScheme.onPrimary
+            else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(size * 0.22f),
+        )
+    }
+}
+
 @Composable
 private fun Ribbon(filled: Boolean, label: String = "", modifier: Modifier = Modifier) {
     val color = MaterialTheme.colorScheme.primary
@@ -2499,6 +2530,8 @@ private fun ReaderControls(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onSeek: (Double) -> Unit,
+    speaking: Boolean,
+    onToggleSpeaking: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var dragged by remember { mutableStateOf<Float?>(null) }
@@ -2514,6 +2547,14 @@ private fun ReaderControls(
                 modifier = Modifier.align(Alignment.CenterHorizontally),
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // The same control as the top bar's, bigger, and here it stays in reach
+                // while the page is being read.
+                SpeakButton(
+                    speaking = speaking,
+                    onToggle = onToggleSpeaking,
+                    modifier = Modifier.padding(end = 8.dp),
+                    size = 48.dp,
+                )
                 TextButton(
                     onClick = onPrevious,
                     enabled = enabled,

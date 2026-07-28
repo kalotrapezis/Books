@@ -117,8 +117,9 @@ try {
             let swiped = false
             // foliate moves the caret with the page when it navigates (the paginator's
             // setSelectionTo), so a bare selectionchange is not proof that the reader
-            // selected anything. A touch on the page starts one; the changes after that
-            // are its handles being dragged.
+            // selected anything. A pointer on the page starts one; the changes after
+            // that are its handles being dragged. Pointer, not touch: a mouse and a
+            // stylus select as well, and an emulator has no fingers at all.
             let touchedAt = 0
             let reporting = false
             let pinchStart = null
@@ -138,6 +139,9 @@ try {
                 swiped = false
                 touchedAt = Date.now()
             }, { passive: true })
+            doc.addEventListener('pointerdown', () => {
+                touchedAt = Date.now()
+            }, { passive: true, capture: true })
             doc.addEventListener('touchmove', event => {
                 if (!pinchStart || event.touches.length !== 2) return
                 const factor = spread(event) / (pinchStart.distance || 1)

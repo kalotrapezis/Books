@@ -106,7 +106,13 @@ already; the rest need your real device and real files.
 39. Leave the book while it is reading: the voice stops.
 40. Tap a picture in a book: it opens full screen, double tap fills the screen,
     a tap closes it.
-41. TalkBack on: the bookmark ribbon, the page arrows, the back chevron and the
+41. Select text: the top bar stays, so read aloud and the bookmark ribbon are
+    still in reach while the selection panel is open. On the emulator, select
+    with the mouse too — that is a pointer, not a finger, and it used to be
+    ignored, which left you with no panel at all.
+42. Read aloud is in two places now: circled in the top bar, and bigger in the
+    island under the page.
+43. TalkBack on: the bookmark ribbon, the page arrows, the back chevron and the
     read-aloud button all announce what they do. This is the one item here I
     could not check on the emulator.
 
