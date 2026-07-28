@@ -12,7 +12,7 @@ This is an independent project. It is not an official Foliate application.
 No DRM. No network permission.
 
 - Branch: `android-dev`
-- Version: 0.0.2
+- Version: 0.0.3
 - Licence: `GPL-3.0-or-later`
 
 ## Screenshots
@@ -42,7 +42,14 @@ No DRM. No network permission.
 - Paginated and scrolled modes, both crossing chapter boundaries.
 - Drag left or right to turn the page; a tap shows or hides the UI. The seek bar
   scrubs at a third of finger speed with a haptic tick per page.
-- Chapters from the book's table of contents.
+- Chapters from the book's table of contents, with the book's own landmarks and
+  printed page numbers beside them when it carries any.
+- Search the whole book: results with their chapter and the words around each
+  match, every hit outlined in the page, tap to go there.
+- Read aloud with the device's voice, in the book's own language: the sentence
+  being read is underlined and scrolls into view, and it carries on into the
+  next chapter by itself.
+- Tap a picture to see it full screen.
 - Two low-glare themes, grey on white and white on grey, with the book's own
   colours kept as shades of grey.
 - Text size, line spacing, margins and font family.
@@ -65,8 +72,9 @@ No DRM. No network permission.
 
 ## Not yet
 
-MOBI/AZW3 on a real file; search; text to speech; OPDS catalogs; automatic
-backup and restore. See [Plan.md](Plan.md) for the phase-by-phase plan.
+MOBI/AZW3 on a real file; OPDS catalogs (they need an Internet permission this
+app does not ask for); Calibre's embedded highlights; automatic backup and
+restore. See [Plan.md](Plan.md) for the phase-by-phase plan.
 
 ## Security
 
@@ -92,6 +100,50 @@ The second command needs a device or emulator. On MIUI/HyperOS also enable
 Developer options → Install via USB.
 
 ## Changelog
+
+### 0.0.3 — 2026-07-28
+
+Search, reading aloud, and the end of a run of selection bugs.
+
+**New**
+
+- Search the whole book. Results arrive chapter by chapter with the words
+  around each match, every hit is outlined in the page, and tapping one goes
+  there. A sidebar tab on a tablet, in the bottom pill on a phone.
+- Read aloud with the device's own voice, in the language the book declares.
+  The sentence being read is underlined and scrolled into view, and the reader
+  carries on into the next chapter by itself. `foliate-js` produces SSML for
+  speech-dispatcher, which Android cannot take, so the reader flattens it and
+  feeds the engine one block at a time.
+- The book's landmarks and its printed page numbers share the chapters panel,
+  each under its own heading. A book with neither looks exactly as before.
+- Tap a picture in a book to see it full screen; double tap fills the screen.
+  It opens inside the reader page, so book bytes never cross the bridge.
+- Bookmarks say where they are — chapter, section, and the words they sit on —
+  instead of "Saved page 1". They are still stored as bare CFI, Foliate's way.
+- Screen reader labels for the controls that are drawings or punctuation: the
+  bookmark ribbon, the page chevrons, back, and read aloud.
+
+**Fixes**
+
+- The selection panel used to close the moment you pressed Note, lose its
+  panel when you dragged a handle to widen the selection, and ignore a mouse or
+  stylus entirely. All three were the same mistake: Android's selection action
+  mode ends for several different reasons and the reader guessed at which. It
+  asks the page now.
+- Selecting text no longer costs you the reader's controls.
+- A file that turns out not to be a book no longer sits in the library as an
+  "Opening book…" row. A book you have read keeps its place, its bookmarks and
+  its annotations even when today its file cannot be opened.
+- Navigating no longer looks like a text selection. `foliate-js` moves the
+  caret with the page, which was popping the selection panel open on every
+  jump.
+
+**Under it**
+
+- 34 instrumented tests over every panel and dialog, and the controls inside
+  them that are not obvious: the two-step remove, the note field, the sidebar
+  tabs, the bookmark labels, the search field, the screen reader labels.
 
 ### 0.0.2 — 2026-07-28
 
