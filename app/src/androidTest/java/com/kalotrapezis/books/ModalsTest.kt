@@ -1,12 +1,17 @@
 package com.kalotrapezis.books
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
@@ -216,6 +221,8 @@ class ModalsTest {
                     ),
                     onBack = null,
                     onOpen = { opened = it },
+                    landmarks = emptyList(),
+                    pageList = emptyList(),
                 )
             }
         }
@@ -245,6 +252,8 @@ class ModalsTest {
                 Sidebar(
                     panels = ReaderPanels(
                         toc = listOf(TocEntry("Chapter One", "one.xhtml", 0)),
+                        landmarks = emptyList(),
+                        pageList = emptyList(),
                         annotations = listOf(
                             JSONObject().put("value", "epubcfi(/6/4!/4/2:0)")
                                 .put("color", "yellow").put("text", "highlighted"),
@@ -317,6 +326,106 @@ class ModalsTest {
             }
         }
         compose.onNodeWithText("Searching…").assertIsDisplayed()
+    }
+
+    // Phase 4: the chapters panel also carries the book's landmarks and its printed
+    // page numbers, each under its own heading, all opening by href.
+    @Test
+    fun chaptersShowLandmarksAndPrintedPages() {
+        var opened: String? = null
+        compose.setContent {
+            MaterialTheme {
+                ChaptersScreen(
+                    toc = listOf(TocEntry("Chapter One", "one.xhtml", 0)),
+                    onBack = null,
+                    onOpen = { opened = it },
+                    landmarks = listOf(TocEntry("Start of text", "start.xhtml", 0)),
+                    pageList = listOf(TocEntry("42", "page42.xhtml", 0)),
+                )
+            }
+        }
+
+        compose.onNodeWithText("Landmarks").assertIsDisplayed()
+        compose.onNodeWithText("Contents").assertIsDisplayed()
+        compose.onNodeWithText("Printed pages").assertIsDisplayed()
+        compose.onNodeWithText("Start of text").performClick()
+        assertEquals("start.xhtml", opened)
+        compose.onNodeWithText("42").performClick()
+        assertEquals("page42.xhtml", opened)
+    }
+
+    @Test
+    fun chaptersDropTheHeadingsWhenTheBookHasNeither() {
+        compose.setContent {
+            MaterialTheme {
+                ChaptersScreen(
+                    toc = listOf(TocEntry("Chapter One", "one.xhtml", 0)),
+                    onBack = null,
+                    onOpen = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Chapter One").assertIsDisplayed()
+        compose.onAllNodesWithText("Landmarks").assertCountEquals(0)
+        compose.onAllNodesWithText("Printed pages").assertCountEquals(0)
+    }
+
+    // Reading aloud: the button says which state it is in, for a screen reader too.
+    @Test
+    fun readAloudButtonTogglesAndIsLabelled() {
+        var toggled = 0
+        compose.setContent {
+            var speaking by remember { mutableStateOf(false) }
+            MaterialTheme {
+                ReaderTopBar(
+                    book = book,
+                    chapter = "Chapter One",
+                    error = "",
+                    bookmarked = false,
+                    onBack = null,
+                    backIsSidebar = false,
+                    onToggleBookmark = {},
+                    onShowBookmarks = {},
+                    speaking = speaking,
+                    onToggleSpeaking = {
+                        speaking = !speaking
+                        toggled += 1
+                    },
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("Read aloud").performClick()
+        compose.onNodeWithContentDescription("Stop reading aloud").assertIsDisplayed()
+            .performClick()
+        compose.onNodeWithContentDescription("Read aloud").assertIsDisplayed()
+        assertEquals(2, toggled)
+    }
+
+    // The ribbon is a drawing, and the page arrows are punctuation: without these a
+    // screen reader announces nothing useful.
+    @Test
+    fun theDrawnControlsAreAnnouncedToAScreenReader() {
+        compose.setContent {
+            MaterialTheme {
+                ReaderTopBar(
+                    book = book,
+                    chapter = "",
+                    error = "",
+                    bookmarked = true,
+                    onBack = {},
+                    backIsSidebar = false,
+                    onToggleBookmark = {},
+                    onShowBookmarks = {},
+                    speaking = false,
+                    onToggleSpeaking = {},
+                )
+            }
+        }
+        compose.onNodeWithContentDescription(
+            "Remove this bookmark, long press for the list",
+        ).assertIsDisplayed()
+        compose.onNodeWithContentDescription("Back").assertIsDisplayed()
     }
 
     @Test

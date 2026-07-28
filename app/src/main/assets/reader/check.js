@@ -7,6 +7,10 @@ const annotations = new Map()
 let typography = null
 /** Fixed-layout zoom: null means fit the whole page, a number is a pinch scale. */
 let zoom = null
+/** The overlay key for the sentence being read aloud, kept out of the book's own. */
+const SPOKEN_KEY = 'books-spoken'
+/** foliate's overlay drawing functions, shared with reading aloud. */
+let Overlayer
 /** A new search abandons the one still walking the book. */
 let searchToken = 0
 // ponytail: a hard cap, not paging. A search with thousands of hits is a search that
@@ -56,7 +60,7 @@ try {
                 new URL('./pdf-worker.mjs', import.meta.url).toString()
         }
         const { makeBook } = await import('../view.js')
-        const { Overlayer } = await import('../overlayer.js')
+        ;({ Overlayer } = await import('../overlayer.js'))
         const book = await makeBook(`/book/${bookFile}`)
         document.body.dataset.readerStage = 'book-parsed'
         secureBookContent(book)
@@ -93,7 +97,12 @@ try {
             title: text(languageMap(book.metadata?.title)).replace(/^\/book\/.*/, ''),
             author: contributor(book.metadata?.author),
             identifier: text(book.metadata?.identifier),
+            // Reading aloud picks its voice from this, not from the phone's locale.
+            language: text(languageMap(book.metadata?.language)).slice(0, 35),
             toc: flattenToc(book.toc),
+            // Printed page numbers and the book's own landmarks, when it has them.
+            pageList: flattenToc(book.pageList),
+            landmarks: flattenToc(book.landmarks),
             // Comics and PDF: their renderer ignores the flow setting, so the app keeps
             // the paginated controls for them instead of the scrolled ones.
             fixedLayout: Boolean(view.isFixedLayout),
@@ -192,6 +201,17 @@ try {
                     return
                 }
                 if (event.target?.closest?.('a')) return
+                // A picture in the book opens full screen, inside the reader page. Its
+                // bytes never cross the bridge and never reach a native decoder.
+                const image = event.target?.closest?.('img, image, svg image')
+                if (image && !view.isFixedLayout) {
+                    const source = image.currentSrc || image.src
+                        || image.getAttribute?.('href') || ''
+                    if (source.startsWith('blob:') || source.startsWith('data:')) {
+                        showImage(source, image.getAttribute?.('alt'))
+                        return
+                    }
+                }
                 // A page with no text at all (comics, PDF images) has no selection
                 // object; that is not an open selection, it is nothing to protect.
                 if (doc.defaultView?.getSelection()?.isCollapsed === false) return
@@ -398,6 +418,16 @@ try {
                 view.clearSearch()
                 return
             }
+            // Android's engine has no SSML, so foliate's marked-up fragment is flattened
+            // to text here and spoken block by block, with its own block highlighted.
+            if (command.type === 'Speak'
+                && Object.keys(command).length === 2
+                && ['start', 'next', 'stop'].includes(command.action)) {
+                commandQueue = commandQueue
+                    .then(() => speak(view, command.action))
+                    .catch(showReaderError)
+                return
+            }
             if (command.type === 'GoToHref'
                 && Object.keys(command).length === 2
                 && typeof command.href === 'string' && command.href.length <= 2048) {
@@ -493,6 +523,87 @@ async function excerpt(view, index, anchor) {
     } catch {
         return ''
     }
+}
+
+/**
+ * Full-screen view of a picture from the book, drawn over the reader page itself.
+ * Tap to close, double tap to fill the screen and back.
+ */
+function showImage(source, alt) {
+    document.querySelector('#image-viewer')?.remove()
+    const viewer = document.createElement('div')
+    viewer.id = 'image-viewer'
+    const picture = document.createElement('img')
+    picture.src = source
+    picture.alt = text(alt)
+    picture.style.cssText =
+        'max-width:100%;max-height:100%;object-fit:contain;transition:transform .2s'
+    viewer.style.cssText = 'position:fixed;inset:0;z-index:9;display:flex;'
+        + 'align-items:center;justify-content:center;background:rgba(0,0,0,.92);'
+        + 'padding:16px;box-sizing:border-box'
+    let filled = false
+    viewer.addEventListener('click', () => viewer.remove())
+    picture.addEventListener('dblclick', event => {
+        event.stopPropagation()
+        filled = !filled
+        picture.style.transform = filled ? 'scale(2)' : 'scale(1)'
+    })
+    viewer.append(picture)
+    document.body.append(viewer)
+}
+
+/**
+ * One step of reading aloud. foliate walks the blocks and keeps the highlight; the app
+ * owns the voice, so each step answers with the words to say next, or with nothing when
+ * the book is finished.
+ */
+async function speak(view, action) {
+    const clearSpoken = () => view.renderer?.getContents?.()
+        .forEach(content => content.overlayer?.remove(SPOKEN_KEY))
+    if (action === 'stop') {
+        clearSpoken()
+        view.tts = null
+        send({ type: 'Spoke', text: '', done: true })
+        return
+    }
+    const init = async () => {
+        await view.initTTS('sentence', range => {
+            // Follow the voice: scroll to the sentence and mark it, so a page of text
+            // says where it is being read.
+            view.renderer.scrollToAnchor(range.cloneRange(), true)
+            const overlayer = view.renderer.getContents()
+                .find(content => content.overlayer)?.overlayer
+            if (!overlayer) return
+            overlayer.remove(SPOKEN_KEY)
+            overlayer.add(SPOKEN_KEY, range.cloneRange(), Overlayer.underline, {
+                color: 'currentColor',
+            })
+        })
+    }
+    await init()
+    let ssml = action === 'start' ? view.tts.start() : view.tts.next()
+    if (!ssml) {
+        // The section is spoken out: turn the page and carry on from its first block.
+        const moved = await view.next().then(() => true, () => false)
+        if (!moved) {
+            send({ type: 'Spoke', text: '', done: true })
+            return
+        }
+        view.tts = null
+        await init()
+        ssml = view.tts.start()
+    }
+    if (!ssml) {
+        send({ type: 'Spoke', text: '', done: true })
+        return
+    }
+    const fragment = new DOMParser().parseFromString(ssml, 'application/xml')
+    // foliate follows along by mark, and Android's engine reports none, so the first
+    // mark of the block is set here: that is what scrolls and underlines it.
+    const mark = fragment.querySelector('mark[name]')?.getAttribute('name')
+    if (mark) view.tts.setMark(mark)
+    const spoken = text(fragment.documentElement?.textContent).slice(0, 4000)
+    send({ type: 'Spoke', text: spoken, done: !spoken })
 }
 
 /** Pinch zoom for PDF and comics; foliate re-renders PDF pages at the new scale. */

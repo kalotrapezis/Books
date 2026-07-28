@@ -92,6 +92,24 @@ already; the rest need your real device and real files.
 35. Long press the ribbon: each bookmark says its chapter, its section and the
     words it sits on, instead of "Saved page 1".
 
+## G. Phase 4
+
+36. Chapters: a book with landmarks or printed page numbers shows them under
+    their own headings, and each one opens where it says. A book with neither
+    looks exactly as before.
+37. Press ▶ in the top bar: the book is read aloud, the sentence being read is
+    underlined and scrolls into view, and it carries on into the next chapter
+    on its own. ✕ stops it.
+38. A Greek book should be read with a Greek voice — it comes from the book's
+    metadata, so a book that declares nothing falls back to the device voice.
+    (Install the voice in Android's settings if it sounds wrong.)
+39. Leave the book while it is reading: the voice stops.
+40. Tap a picture in a book: it opens full screen, double tap fills the screen,
+    a tap closes it.
+41. TalkBack on: the bookmark ribbon, the page arrows, the back chevron and the
+    read-aloud button all announce what they do. This is the one item here I
+    could not check on the emulator.
+
 ## Known gaps, not bugs to report
 
 - A fixed-layout page (PDF, comic) is not centred in the pane and its bottom is

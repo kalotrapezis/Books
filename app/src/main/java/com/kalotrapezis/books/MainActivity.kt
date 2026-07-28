@@ -3,6 +3,12 @@ package com.kalotrapezis.books
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.rememberUpdatedState
 import android.net.Uri
 import android.os.Bundle
 import android.view.ActionMode
@@ -73,7 +79,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.res.painterResource
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -126,6 +134,8 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -577,6 +587,8 @@ internal fun Sidebar(
                         toc = panels.toc,
                         onBack = null,
                         onOpen = panels.openHref,
+                        landmarks = panels.landmarks,
+                        pageList = panels.pageList,
                         color = Color.Transparent,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -966,6 +978,8 @@ private fun EmptyReader(modifier: Modifier = Modifier) {
  */
 internal class ReaderPanels(
     val toc: List<TocEntry>,
+    val landmarks: List<TocEntry>,
+    val pageList: List<TocEntry>,
     val annotations: List<JSONObject>,
     val openHref: (String) -> Unit,
     val openCfi: (String) -> Unit,
@@ -1017,6 +1031,9 @@ private fun ReaderScreen(
     var readerReady by remember(book.id) { mutableStateOf(false) }
     var chromeVisible by remember(book.id) { mutableStateOf(true) }
     var toc by remember(book.id) { mutableStateOf(emptyList<TocEntry>()) }
+    // A book's own printed page numbers and landmarks, when it carries them.
+    var pageList by remember(book.id) { mutableStateOf(emptyList<TocEntry>()) }
+    var landmarks by remember(book.id) { mutableStateOf(emptyList<TocEntry>()) }
     // Comics and PDF keep their own fixed layout: scrolled mode does not apply to them,
     // and pretending it does leaves them with no way to turn a page at all.
     var fixedLayout by remember(book.id) { mutableStateOf(false) }
@@ -1027,6 +1044,7 @@ private fun ReaderScreen(
     var searchResults by remember(book.id) { mutableStateOf(emptyList<SearchHit>()) }
     var searching by remember(book.id) { mutableStateOf(false) }
     var showSearch by remember(book.id) { mutableStateOf(false) }
+    var speaking by remember(book.id) { mutableStateOf(false) }
     var showAnnotations by remember(book.id) { mutableStateOf(false) }
     var selectionLower by remember(book.id) { mutableStateOf(true) }
     var openedAnnotation by remember(book.id) { mutableStateOf<JSONObject?>(null) }
@@ -1040,6 +1058,12 @@ private fun ReaderScreen(
             .onFailure { error = "Reader command failed: ${it.message ?: "unknown error"}" }
     }
     val sendCommand: (String) -> Unit = { type -> send(JSONObject().put("type", type)) }
+    val speakCommand: (String) -> Unit = { action ->
+        send(JSONObject().put("type", "Speak").put("action", action))
+    }
+    // Android's own voice reads what the reader hands over, one block at a time, and
+    // asks for the next one when it runs out. No network: the engine is on the device.
+    val speech = rememberSpeech(onSpoken = { if (speaking) speakCommand("next") })
     val runSearch: (String) -> Unit = { query ->
         searchResults = emptyList()
         if (query.isBlank()) {
@@ -1170,13 +1194,15 @@ private fun ReaderScreen(
         }
     }
     BackHandler(enabled = showChapters) { showChapters = false }
+    BackHandler(enabled = showSearch) { showSearch = false }
     BackHandler(enabled = showAnnotations) { showAnnotations = false }
     BackHandler(enabled = selection != null) {
         sendCommand("ClearSelection")
         selection = null
     }
     BackHandler(
-        enabled = !showChapters && !showAnnotations && selection == null && onBack != null,
+        enabled = !showChapters && !showAnnotations && !showSearch &&
+            selection == null && onBack != null,
     ) { onBack?.invoke() }
 
     LaunchedEffect(readerReady, theme, keepColors) {
@@ -1216,9 +1242,13 @@ private fun ReaderScreen(
                         readerReady = false
                     }
                 },
-                onBookReady = { title, author, identifier, chapters, fixed ->
+                onBookReady = { title, author, identifier, language,
+                                chapters, pages, marks, fixed ->
                     error = ""
+                    speech.speakIn(language)
                     toc = chapters
+                    pageList = pages
+                    landmarks = marks
                     fixedLayout = fixed
                     persistenceScope.launch {
                         dao.updateMetadata(
@@ -1275,6 +1305,14 @@ private fun ReaderScreen(
                 },
                 onSelectionCleared = { selection = null },
                 onCfisDescribed = { cfiLabels = cfiLabels + it },
+                onSpoke = { spoken, done ->
+                    if (done || spoken.isBlank()) {
+                        speaking = false
+                        speech.stop()
+                    } else {
+                        speech.say(spoken)
+                    }
+                },
                 onSearchResults = { hits, done ->
                     searchResults = searchResults + hits
                     if (done) searching = false
@@ -1304,6 +1342,8 @@ private fun ReaderScreen(
         if (showChapters) {
             ChaptersScreen(
                 toc = toc,
+                landmarks = landmarks,
+                pageList = pageList,
                 onBack = { showChapters = false },
                 onOpen = { href ->
                     showChapters = false
@@ -1374,6 +1414,8 @@ private fun ReaderScreen(
         if (onPanels != null) {
             val panels = ReaderPanels(
                 toc = toc,
+                landmarks = landmarks,
+                pageList = pageList,
                 annotations = annotations,
                 openHref = { send(JSONObject().put("type", "GoToHref").put("href", it)) },
                 openCfi = { send(JSONObject().put("type", "GoToCfi").put("cfi", it)) },
@@ -1482,6 +1524,12 @@ private fun ReaderScreen(
                     }
                 },
                 onShowBookmarks = { showBookmarks = true },
+                speaking = speaking,
+                onToggleSpeaking = {
+                    speaking = !speaking
+                    speakCommand(if (speaking) "start" else "stop")
+                    if (!speaking) speech.stop()
+                },
             )
         }
         val current = selection
@@ -1981,6 +2029,77 @@ private fun PillButton(label: String, onClick: () -> Unit, modifier: Modifier = 
     }
 }
 
+/**
+ * The device's own text-to-speech, kept alive for as long as a book is open. It is a
+ * device service, not a network one, so reading aloud stays offline like the rest.
+ */
+@Composable
+private fun rememberSpeech(onSpoken: () -> Unit): Speech {
+    val context = LocalContext.current
+    val spoken = rememberUpdatedState(onSpoken)
+    val speech = remember { Speech(context) { spoken.value() } }
+    DisposableEffect(speech) { onDispose { speech.shutdown() } }
+    return speech
+}
+
+private class Speech(context: Context, private val onSpoken: () -> Unit) {
+    private var ready = false
+    private var pending: String? = null
+    private var pendingLocale: java.util.Locale? = null
+    private val engine = TextToSpeech(context) { status ->
+        ready = status == TextToSpeech.SUCCESS
+        if (ready) applyLocale()
+        pending?.let { if (ready) say(it) }
+        pending = null
+    }.apply {
+        setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) = Unit
+            override fun onDone(utteranceId: String?) {
+                // Back to the composition thread: the reader is asked for the next
+                // block from there, not from the engine's own thread.
+                Handler(Looper.getMainLooper()).post { onSpoken() }
+            }
+
+            @Deprecated("Kept for the platform interface")
+            override fun onError(utteranceId: String?) = Unit
+        })
+    }
+
+    /** The book's own language, so a Greek book is not read with an English voice. */
+    fun speakIn(tag: String) {
+        val locale = runCatching { java.util.Locale.forLanguageTag(tag) }.getOrNull()
+        if (tag.isBlank() || locale == null) return
+        pendingLocale = locale
+        if (ready) applyLocale()
+    }
+
+    private fun applyLocale() {
+        val locale = pendingLocale ?: return
+        // LANG_MISSING_DATA/NOT_SUPPORTED leave the engine on its default voice, which
+        // is better than refusing to read at all.
+        runCatching { engine.setLanguage(locale) }
+        pendingLocale = null
+    }
+
+    fun say(sentence: String) {
+        if (!ready) {
+            pending = sentence
+            return
+        }
+        engine.speak(sentence, TextToSpeech.QUEUE_FLUSH, null, "books")
+    }
+
+    fun stop() {
+        pending = null
+        runCatching { engine.stop() }
+    }
+
+    fun shutdown() {
+        stop()
+        runCatching { engine.shutdown() }
+    }
+}
+
 /** The reader's own search over the whole book: what it found, and where. */
 @Composable
 internal fun SearchScreen(
@@ -2070,7 +2189,10 @@ private fun ScreenHeader(
             // system back button does the same thing. In the sidebar there is nothing
             // to go back to — the tabs underneath are the navigation.
             if (onBack != null) {
-                IconButton(onClick = onBack) {
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier.semantics { contentDescription = "Back" },
+                ) {
                     Text("‹", style = MaterialTheme.typography.headlineMedium)
                 }
             } else {
@@ -2091,6 +2213,10 @@ internal fun ChaptersScreen(
     toc: List<TocEntry>,
     onBack: (() -> Unit)?,
     onOpen: (String) -> Unit,
+    /** The book's own landmarks (cover, start of text, notes), when it has any. */
+    landmarks: List<TocEntry> = emptyList(),
+    /** The printed edition's page numbers, when the book carries a page list. */
+    pageList: List<TocEntry> = emptyList(),
     color: Color = Color.Unspecified,
     modifier: Modifier = Modifier,
 ) {
@@ -2098,24 +2224,49 @@ internal fun ChaptersScreen(
         Column {
             ScreenHeader("Chapters", onBack)
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 72.dp)) {
-                items(toc.size) { index ->
-                    val entry = toc[index]
-                    Text(
-                        text = entry.label,
-                        modifier = Modifier.fillMaxWidth()
-                            .clickable { onOpen(entry.href) }
-                            .padding(
-                                start = (16 + entry.depth * 16).dp,
-                                end = 16.dp,
-                                top = 12.dp,
-                                bottom = 12.dp,
-                            ),
-                    )
-                    HorizontalDivider()
+                if (landmarks.isNotEmpty()) {
+                    item { NavigationHeading("Landmarks") }
+                    items(landmarks.size) { index ->
+                        NavigationRow(landmarks[index], onOpen)
+                    }
+                    item { NavigationHeading("Contents") }
+                }
+                items(toc.size) { index -> NavigationRow(toc[index], onOpen) }
+                // Printed page numbers are short and there can be hundreds, so they go
+                // last, where they read as an index rather than a table of contents.
+                if (pageList.isNotEmpty()) {
+                    item { NavigationHeading("Printed pages") }
+                    items(pageList.size) { index -> NavigationRow(pageList[index], onOpen) }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun NavigationHeading(title: String) {
+    Text(
+        title,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp),
+    )
+}
+
+@Composable
+private fun NavigationRow(entry: TocEntry, onOpen: (String) -> Unit) {
+    Text(
+        text = entry.label,
+        modifier = Modifier.fillMaxWidth()
+            .clickable { onOpen(entry.href) }
+            .padding(
+                start = (16 + entry.depth * 16).dp,
+                end = 16.dp,
+                top = 12.dp,
+                bottom = 12.dp,
+            ),
+    )
+    HorizontalDivider()
 }
 
 @Composable
@@ -2169,7 +2320,7 @@ internal fun BookmarksDialog(
 }
 
 @Composable
-private fun ReaderTopBar(
+internal fun ReaderTopBar(
     book: BookEntity,
     chapter: String,
     error: String,
@@ -2179,6 +2330,8 @@ private fun ReaderTopBar(
     backIsSidebar: Boolean,
     onToggleBookmark: () -> Unit,
     onShowBookmarks: () -> Unit,
+    speaking: Boolean,
+    onToggleSpeaking: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     ChromeIsland(modifier.padding(12.dp)) {
@@ -2192,7 +2345,10 @@ private fun ReaderTopBar(
                         Icon(Icons.Filled.Menu, contentDescription = "Show the library")
                     }
                 } else {
-                    TextButton(onClick = onBack) {
+                    TextButton(
+                        onClick = onBack,
+                        modifier = Modifier.semantics { contentDescription = "Back" },
+                    ) {
                         Text("‹", style = MaterialTheme.typography.titleLarge)
                     }
                 }
@@ -2219,8 +2375,16 @@ private fun ReaderTopBar(
                     Text(error, color = MaterialTheme.colorScheme.error, maxLines = 2)
                 }
             }
+            IconButton(onClick = onToggleSpeaking) {
+                Icon(
+                    if (speaking) Icons.Filled.Close else Icons.Filled.PlayArrow,
+                    contentDescription = if (speaking) "Stop reading aloud" else "Read aloud",
+                )
+            }
             Ribbon(
                 filled = bookmarked,
+                label = if (bookmarked) "Remove this bookmark, long press for the list"
+                else "Bookmark this page, long press for the list",
                 // Long press opens the saved pages instead of costing another icon.
                 modifier = Modifier
                     .combinedClickable(
@@ -2237,9 +2401,9 @@ private fun ReaderTopBar(
 
 /** Bookmark ribbon: a rectangle with a notch cut out of the bottom edge. */
 @Composable
-private fun Ribbon(filled: Boolean, modifier: Modifier = Modifier) {
+private fun Ribbon(filled: Boolean, label: String = "", modifier: Modifier = Modifier) {
     val color = MaterialTheme.colorScheme.primary
-    Canvas(modifier) {
+    Canvas(modifier.semantics { if (label.isNotBlank()) contentDescription = label }) {
         val notch = size.height * 0.25f
         val path = Path().apply {
             moveTo(0f, 0f)
@@ -2350,7 +2514,11 @@ private fun ReaderControls(
                 modifier = Modifier.align(Alignment.CenterHorizontally),
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onPrevious, enabled = enabled) {
+                TextButton(
+                    onClick = onPrevious,
+                    enabled = enabled,
+                    modifier = Modifier.semantics { contentDescription = "Previous page" },
+                ) {
                     Text("‹", style = MaterialTheme.typography.headlineMedium)
                 }
                 Slider(
@@ -2377,7 +2545,11 @@ private fun ReaderControls(
                     enabled = enabled,
                     modifier = Modifier.weight(1f),
                 )
-                TextButton(onClick = onNext, enabled = enabled) {
+                TextButton(
+                    onClick = onNext,
+                    enabled = enabled,
+                    modifier = Modifier.semantics { contentDescription = "Next page" },
+                ) {
                     Text("›", style = MaterialTheme.typography.headlineMedium)
                 }
             }
@@ -2516,13 +2688,17 @@ private fun ReaderView(
     book: BookEntity,
     onBridgeReady: (JavaScriptReplyProxy) -> Unit,
     onBridgeClosed: (JavaScriptReplyProxy?) -> Unit,
-    onBookReady: (String, String, String, List<TocEntry>, Boolean) -> Unit,
+    onBookReady: (
+        String, String, String, String,
+        List<TocEntry>, List<TocEntry>, List<TocEntry>, Boolean,
+    ) -> Unit,
     onTapped: () -> Unit,
     onAnnotationTapped: (String) -> Unit,
     onSelected: (String, String, Boolean) -> Unit,
     onSelectionCleared: () -> Unit,
     onCfisDescribed: (Map<String, String>) -> Unit,
     onSearchResults: (List<SearchHit>, Boolean) -> Unit,
+    onSpoke: (String, Boolean) -> Unit,
     onTapPage: (Boolean) -> Unit,
     onRelocated: (String, Double?, Int?, Int?, String, String) -> Unit,
     onReaderError: (String) -> Unit,
@@ -2609,7 +2785,10 @@ private fun ReaderView(
                             data.optString("title").normalizedText().ifBlank { fallbackTitle },
                             data.optString("author").normalizedText(),
                             data.optString("identifier").normalizedText(),
+                            data.optString("language").normalizedText(),
                             data.optJSONArray("toc").toTocEntries(),
+                            data.optJSONArray("pageList").toTocEntries(),
+                            data.optJSONArray("landmarks").toTocEntries(),
                             data.optBoolean("fixedLayout"),
                         )
                         "Relocated" -> {
@@ -2638,6 +2817,10 @@ private fun ReaderView(
                         "SelectionCleared" -> onSelectionCleared()
                         "CfisDescribed" -> onCfisDescribed(
                             data.optJSONArray("described").toCfiLabels(),
+                        )
+                        "Spoke" -> onSpoke(
+                            data.optString("text").normalizedText(),
+                            data.optBoolean("done", false),
                         )
                         "SearchResults" -> onSearchResults(
                             data.optJSONArray("results").toSearchHits(),
