@@ -1314,6 +1314,7 @@ private fun ReaderScreen(
                     chromeVisible = true
                 },
                 onSelectionCleared = { selection = null },
+                onSelectionEnded = { sendCommand("ReportSelection") },
                 onCfisDescribed = { cfiLabels = cfiLabels + it },
                 onSpoke = { spoken, done ->
                     if (done || spoken.isBlank()) {
@@ -2737,6 +2738,8 @@ private fun ReaderView(
     onAnnotationTapped: (String) -> Unit,
     onSelected: (String, String, Boolean) -> Unit,
     onSelectionCleared: () -> Unit,
+    /** Android's selection action mode ended; ask the page what is left selected. */
+    onSelectionEnded: () -> Unit,
     onCfisDescribed: (Map<String, String>) -> Unit,
     onSearchResults: (List<SearchHit>, Boolean) -> Unit,
     onSpoke: (String, Boolean) -> Unit,
@@ -2782,10 +2785,10 @@ private fun ReaderView(
             // Keep the selection handles, drop the system Copy/Share items: the
             // action mode still runs, it just gets an empty menu.
             object : WebView(context) {
-                // The action mode also dies when the selection panel takes focus — the
-                // note field does exactly that. Only a tap that left focus on the page
-                // means the reader dropped the selection.
-                private val clearIfStillOnThePage = { if (hasFocus()) onSelectionCleared() }
+                // The action mode dies for three different reasons: the selection was
+                // tapped away, its handles were grabbed, or the panel took focus. Only
+                // the page knows which, so it is asked rather than guessed at.
+                private val clearIfStillOnThePage = { onSelectionEnded() }
 
                 override fun startActionMode(callback: ActionMode.Callback?): ActionMode? =
                     super.startActionMode(EmptyMenu(callback, clearIfStillOnThePage))

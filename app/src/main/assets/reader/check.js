@@ -181,23 +181,11 @@ try {
             }, { passive: true })
             doc.addEventListener('selectionchange', () => {
                 const selection = doc.defaultView?.getSelection()
-                if (selection?.isCollapsed === false && !reporting
-                    && Date.now() - touchedAt > 2000) return
-                reporting = selection?.isCollapsed === false
-                if (!selection || selection.isCollapsed) return
-                const range = selection.getRangeAt(0)
-                const cfi = view.getCFI(detail.index, range)
-                if (!validCfi(cfi)) return
-                // Roughly where on the page the selection sits, so the native panel
-                // can dock on the opposite side and never cover it.
-                const rect = range.getBoundingClientRect()
-                const height = doc.documentElement.clientHeight || 1
-                send({
-                    type: 'Selected',
-                    cfi,
-                    text: text(selection.toString()),
-                    lower: (rect.top + rect.height / 2) / height > 0.5,
-                })
+                const open = selection?.isCollapsed === false
+                if (open && !reporting && Date.now() - touchedAt > 2000) return
+                reporting = open
+                if (!open) return
+                sendSelection(view)
             })
             doc.addEventListener('click', event => {
                 if (swiped) {
@@ -332,6 +320,11 @@ try {
                     .then(() => view.deleteAnnotation({ value: command.cfi }))
                     .then(() => annotations.delete(command.cfi))
                     .catch(showReaderError)
+                return
+            }
+            if (command.type === 'ReportSelection'
+                && Object.keys(command).length === 1) {
+                sendSelection(view)
                 return
             }
             if (command.type === 'ClearSelection'
@@ -527,6 +520,34 @@ async function excerpt(view, index, anchor) {
     } catch {
         return ''
     }
+}
+
+/**
+ * What is selected in the book right now, if anything. The reader is asked this
+ * whenever Android's selection action mode ends: the mode also dies when the handles
+ * are grabbed or the panel takes focus, and only the page knows the difference.
+ */
+function sendSelection(view) {
+    for (const { doc, index } of view.renderer?.getContents?.() ?? []) {
+        const selection = doc?.defaultView?.getSelection()
+        if (!selection || selection.isCollapsed || !selection.rangeCount) continue
+        const range = selection.getRangeAt(0)
+        const cfi = view.getCFI(index, range)
+        if (!validCfi(cfi)) continue
+        // Roughly where on the page the selection sits, so the native panel can dock
+        // on the opposite side and never cover it.
+        const rect = range.getBoundingClientRect()
+        const height = doc.documentElement.clientHeight || 1
+        send({
+            type: 'Selected',
+            cfi,
+            text: text(selection.toString()),
+            lower: (rect.top + rect.height / 2) / height > 0.5,
+        })
+        return true
+    }
+    send({ type: 'SelectionCleared' })
+    return false
 }
 
 /**
