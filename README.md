@@ -66,7 +66,9 @@ No DRM. No network permission.
   unknown fields survive the round trip untouched.
 - Merge on `value` and `modified`, union of bookmarks, warning on identifier
   mismatch.
-- Sync against one file per book inside a Syncthing or Nextcloud folder.
+- Sync inside a folder you already sync (Syncthing, Nextcloud): pick it once and
+  every book gets its own directory named after it, holding `annotations.json`.
+  Drop an export in from a desktop and the book picks it up when you open it.
 - Export as JSON, HTML, Markdown or ORG, the same markup Foliate writes.
 - Dictionary, Wikipedia, translation, copy, cite and share from a selection.
 

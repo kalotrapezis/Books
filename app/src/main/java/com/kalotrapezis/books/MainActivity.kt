@@ -145,6 +145,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
+import androidx.documentfile.provider.DocumentFile
+import com.kalotrapezis.books.data.SyncFolder
+import com.kalotrapezis.books.data.SYNC_FILE_NAME
 import com.kalotrapezis.books.data.BookDao
 import com.kalotrapezis.books.data.BookEntity
 import com.kalotrapezis.books.data.BookIdentifiers
@@ -221,7 +224,9 @@ private const val FONT_SCALE_KEY = "font-scale"
 private const val LINE_HEIGHT_KEY = "line-height"
 private const val MARGIN_KEY = "margin"
 private const val FONT_KEY = "font"
-private const val SYNC_FILE_PREFIX = "sync-file-"
+/** One synced folder for the whole library; each book gets a directory inside it. */
+private const val SYNC_ROOT_KEY = "sync-root"
+private const val SYNC_SEEN_PREFIX = "sync-seen-"
 private const val KEEP_COLORS_KEY = "keep-colors"
 
 /** Reader typography, shared by every book. */
@@ -1107,42 +1112,71 @@ private fun ReaderScreen(
             }.getOrElse { "Export failed: ${it.message ?: "unknown error"}" }
         }
     }
-    // Sync against one file the user picks per book: Syncthing folders hold files
-    // with their own names, so matching by folder + key was too fragile.
-    val syncKey = "$SYNC_FILE_PREFIX${book.id}"
-    var syncUri by remember(book.id) {
-        mutableStateOf(preferences.getString(syncKey, null)?.let(Uri::parse))
+    // Sync against a folder you already sync, with one directory per book inside it,
+    // so annotations can be dropped in from a desktop by hand. The folder is chosen
+    // once for the whole library; each book keeps its own directory under it.
+    var syncRoot by remember {
+        mutableStateOf(preferences.getString(SYNC_ROOT_KEY, null)?.let(Uri::parse))
     }
-    val syncWithFile: (Uri) -> Unit = { target ->
-        persistenceScope.launch {
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    val text = readerContext.contentResolver.openInputStream(target)
-                        ?.use { it.readBytes().decodeToString() }
-                        ?: error("Could not read the file")
-                    FoliateJson.merge(book, text)
-                }
-            }.onSuccess { pendingImport = it }
-                .onFailure { transferNotice = "Sync failed: ${it.message ?: "unknown error"}" }
+    val seenKey = "$SYNC_SEEN_PREFIX${book.id}"
+    val bookFolder: suspend (Uri) -> DocumentFile = { root ->
+        withContext(Dispatchers.IO) {
+            val tree = SyncFolder.root(readerContext, root)
+                ?: error("The synced folder is no longer reachable")
+            SyncFolder.bookFolder(tree, book.title.ifBlank { book.id })
+                ?: error("Could not open the book's folder in the synced folder")
         }
     }
-    val writeSyncFile: (Uri) -> Unit = { target ->
+    val syncFromFolder: (Uri, Boolean) -> Unit = { root, quiet ->
+        persistenceScope.launch {
+            runCatching {
+                val folder = bookFolder(root)
+                withContext(Dispatchers.IO) {
+                    val file = SyncFolder.readable(folder)
+                    if (file == null) {
+                        if (!quiet) error("Nothing to import in ${folder.name}")
+                        return@withContext null
+                    }
+                    preferences.edit().putLong(seenKey, file.lastModified()).apply()
+                    val text = readerContext.contentResolver.openInputStream(file.uri)
+                        ?.use { it.readBytes().decodeToString() }
+                        ?: error("Could not read ${file.name}")
+                    FoliateJson.merge(book, text)
+                }
+            }.onSuccess { merged -> if (merged != null) pendingImport = merged }
+                .onFailure {
+                    if (!quiet) {
+                        transferNotice = "Sync failed: ${it.message ?: "unknown error"}"
+                    }
+                }
+        }
+    }
+    val writeSyncFolder: (Uri) -> Unit = { root ->
         persistenceScope.launch {
             transferNotice = runCatching {
+                val folder = bookFolder(root)
                 withContext(Dispatchers.IO) {
                     val updated = dao.findByUri(book.uri) ?: book
-                    readerContext.contentResolver.openOutputStream(target, "wt")?.use { out ->
+                    val file = SyncFolder.writable(folder)
+                        ?: error("Could not write in ${folder.name}")
+                    readerContext.contentResolver.openOutputStream(file.uri, "wt")?.use { out ->
                         out.write(
                             FoliateJson.export(updated, updated.foliateExtras, page, pages)
                                 .toByteArray(),
                         )
-                    } ?: error("Could not write the file")
+                    } ?: error("Could not write ${file.name}")
+                    preferences.edit()
+                        .putLong(seenKey, SyncFolder.readable(folder)?.lastModified() ?: 0L)
+                        .apply()
+                    folder.name
                 }
-                "Wrote this book's annotations to the synced file."
+                "Saved to ${folder.name}/$SYNC_FILE_NAME."
             }.getOrElse { "Sync write failed: ${it.message ?: "unknown error"}" }
         }
     }
-    val pickSyncFile = rememberLauncherForActivityResult(OpenReadWriteDocument()) { uri ->
+    val pickSyncFolder = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         runCatching {
             readerContext.contentResolver.takePersistableUriPermission(
@@ -1150,9 +1184,21 @@ private fun ReaderScreen(
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
             )
         }
-        preferences.edit().putString(syncKey, uri.toString()).apply()
-        syncUri = uri
-        syncWithFile(uri)
+        preferences.edit().putString(SYNC_ROOT_KEY, uri.toString()).apply()
+        syncRoot = uri
+        syncFromFolder(uri, true)
+    }
+    // A file dropped in from the desktop shows up on its own the next time the book is
+    // opened: only a file newer than the one last seen is offered.
+    LaunchedEffect(book.id, syncRoot) {
+        val root = syncRoot ?: return@LaunchedEffect
+        val seen = preferences.getLong(seenKey, 0L)
+        val newer = runCatching {
+            withContext(Dispatchers.IO) {
+                SyncFolder.readable(bookFolder(root))?.lastModified() ?: 0L
+            }
+        }.getOrDefault(0L)
+        if (newer > seen) syncFromFolder(root, true)
     }
     val applyMerge: (FoliateJson.Merged) -> Unit = { merged ->
         persistenceScope.launch {
@@ -1166,7 +1212,7 @@ private fun ReaderScreen(
             }
             transferNotice = if (merged.identifierMatches) "Imported Foliate data."
             else "Imported, but this file is from a different book identifier."
-            syncUri?.let(writeSyncFile)
+            syncRoot?.let(writeSyncFolder)
         }
     }
     val importFile = rememberLauncherForActivityResult(
@@ -1439,15 +1485,11 @@ private fun ReaderScreen(
                 onExport = { choosingFormat = true },
                 onImport = { importFile.launch(arrayOf("application/json", "text/plain", "*/*")) },
                 onSync = {
-                    val target = syncUri
-                    if (target == null) {
-                        pickSyncFile.launch(arrayOf("application/json", "text/plain", "*/*"))
-                    } else {
-                        syncWithFile(target)
-                    }
+                    val root = syncRoot
+                    if (root == null) pickSyncFolder.launch(null) else syncFromFolder(root, false)
                 },
-                onSyncWrite = { syncUri?.let(writeSyncFile) },
-                syncLabel = if (syncUri == null) "Choose sync file" else "Sync now",
+                onSyncWrite = { syncRoot?.let(writeSyncFolder) },
+                syncLabel = if (syncRoot == null) "Choose sync folder" else "Sync now",
                 notice = transferNotice,
                 searchResults = searchResults,
                 searching = searching,
@@ -1463,15 +1505,11 @@ private fun ReaderScreen(
                 onExport = { choosingFormat = true },
                 onImport = { importFile.launch(arrayOf("application/json", "text/plain", "*/*")) },
                 onSync = {
-                    val target = syncUri
-                    if (target == null) {
-                        pickSyncFile.launch(arrayOf("application/json", "text/plain", "*/*"))
-                    } else {
-                        syncWithFile(target)
-                    }
+                    val root = syncRoot
+                    if (root == null) pickSyncFolder.launch(null) else syncFromFolder(root, false)
                 },
-                onSyncWrite = { syncUri?.let(writeSyncFile) },
-                syncLabel = if (syncUri == null) "Choose sync file" else "Sync now",
+                onSyncWrite = { syncRoot?.let(writeSyncFolder) },
+                syncLabel = if (syncRoot == null) "Choose sync folder" else "Sync now",
                 notice = transferNotice,
                 onOpen = { cfi ->
                     showAnnotations = false
