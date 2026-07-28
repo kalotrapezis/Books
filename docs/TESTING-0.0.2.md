@@ -120,6 +120,28 @@ already; the rest need your real device and real files.
     read-aloud button all announce what they do. This is the one item here I
     could not check on the emulator.
 
+## H. The synced folder
+
+45. Notes → "Choose sync folder", pick your Syncthing folder once. Each book you
+    open gets its own directory in it, named after the book.
+46. "Write" puts `annotations.json` in that directory. Check it from Linux.
+47. Drop a Foliate export into a book's directory from Linux under any name.
+    Open the book on the phone: the import preview comes up on its own, with the
+    identifier warning if the file is from another book.
+48. The newest `.json` in the directory wins, so a file from the desktop beats
+    what the app wrote earlier.
+49. Two books with the same title share a directory — the identifier warning is
+    what catches it. Rename one if it ever happens to you.
+
+## I. Deletions
+
+50. Delete a highlight, then sync against a file that still has it: it stays
+    deleted. Before this, every merge brought back everything you had deleted.
+51. Delete a highlight on the phone, edit the same one on the desktop after
+    that, then sync: the edited one comes back. Newer wins, deletion included.
+52. Nothing else in the file is disturbed — Foliate's own fields still round
+    trip untouched.
+
 ## Known gaps, not bugs to report
 
 - A fixed-layout page (PDF, comic) is not centred in the pane and its bottom is

@@ -78,6 +78,36 @@ class ModalsTest {
         assertEquals("yellow" to "a note of mine", saved)
     }
 
+    // Writing a note, the rest of the actions get out of the way: they do not fit
+    // beside Save and Cancel on a phone.
+    @Test
+    fun theNoteFieldHasThePanelToItself() {
+        compose.setContent {
+            MaterialTheme {
+                SelectionPanel(
+                    excerpt = "words",
+                    note = "",
+                    onHighlight = { _, _ -> },
+                    onCopy = {},
+                    onCite = {},
+                    onShare = {},
+                    onLookUp = {},
+                    onDismiss = {},
+                )
+            }
+        }
+
+        compose.onNodeWithText("Note").performClick()
+        // "Note" itself stays: it is the field's own label now.
+        listOf("Copy", "Cite", "Share", "Dictionary", "Wikipedia", "Translate")
+            .forEach { compose.onAllNodesWithText(it).assertCountEquals(0) }
+        compose.onNodeWithText("Save").assertIsDisplayed()
+        // Cancel puts them back rather than throwing the selection away.
+        compose.onNodeWithText("Cancel").performClick()
+        compose.onNodeWithText("Copy").assertIsDisplayed()
+        compose.onNodeWithText("Dictionary").assertIsDisplayed()
+    }
+
     @Test
     fun selectionPanelActionsReport() {
         var copied = false
