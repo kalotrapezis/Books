@@ -48,6 +48,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -60,7 +62,18 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.systemGestureExclusion
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.takeOrElse
+import androidx.compose.ui.res.painterResource
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -107,6 +120,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -183,6 +197,7 @@ private const val PREFERENCES_NAME = "reader-state"
 private const val BOOK_URI_KEY = "book-uri"
 private const val LAST_CFI_KEY = "last-cfi"
 private const val SCROLLED_KEY = "scrolled"
+private const val PINNED_KEY = "libraryPinned"
 private const val DARK_KEY = "dark"
 private const val FONT_SCALE_KEY = "font-scale"
 private const val LINE_HEIGHT_KEY = "line-height"
@@ -212,9 +227,23 @@ private enum class ReaderTheme(
     val background: Color,
     val foreground: Color,
     val link: Color,
+    /** libadwaita keeps the sidebar a step away from the page it sits next to. */
+    val sidebar: Color,
 ) {
-    GREY_ON_WHITE("Grey on white", Color(0xFFFAFAFA), Color(0xFF3A3A3A), Color(0xFF1A5FB4)),
-    WHITE_ON_GREY("White on grey", Color(0xFF303234), Color(0xFFE4E4E4), Color(0xFF8AB4F8));
+    GREY_ON_WHITE(
+        "Grey on white",
+        Color(0xFFFAFAFA),
+        Color(0xFF3A3A3A),
+        Color(0xFF1A5FB4),
+        Color(0xFFEBEBEB),
+    ),
+    WHITE_ON_GREY(
+        "White on grey",
+        Color(0xFF303234),
+        Color(0xFFE4E4E4),
+        Color(0xFF8AB4F8),
+        Color(0xFF3B3D40),
+    );
 
     fun hex(color: Color) = String.format("#%06X", color.toArgb() and 0xFFFFFF)
 
@@ -276,6 +305,16 @@ private fun BooksApp() {
         context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     }
     var scrolled by remember { mutableStateOf(preferences.getBoolean(SCROLLED_KEY, false)) }
+    // Pinned keeps the sidebar beside the book; unpinned it steps aside while you read
+    // and the reader's back arrow brings it back.
+    var pinned by remember { mutableStateOf(preferences.getBoolean(PINNED_KEY, true)) }
+    var showLibrary by remember { mutableStateOf(false) }
+    var panels by remember { mutableStateOf<ReaderPanels?>(null) }
+    val setPinned: (Boolean) -> Unit = {
+        pinned = it
+        showLibrary = false
+        preferences.edit().putBoolean(PINNED_KEY, it).apply()
+    }
     var theme by remember {
         mutableStateOf(
             if (preferences.getBoolean(DARK_KEY, false)) ReaderTheme.WHITE_ON_GREY
@@ -379,8 +418,17 @@ private fun BooksApp() {
         Surface(modifier = Modifier.fillMaxSize()) {
             BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
                 if (maxWidth >= 600.dp) {
-                    Row(Modifier.fillMaxSize()) {
-                        LibraryPane(
+                    // Unpinned, the sidebar steps aside as soon as a book is open, and
+                    // comes back floating over the page — dragged in from the left edge,
+                    // or with the reader's back arrow.
+                    val docked = pinned || selectedBook == null
+                    val sidebar = @Composable { floating: Boolean ->
+                      Sidebar(
+                        panels = panels,
+                        theme = theme,
+                        floating = floating,
+                        modifier = Modifier.width(300.dp).fillMaxHeight(),
+                      ) { paneModifier -> LibraryPane(
                             books = library,
                             selectedBookId = selectedBookId,
                             error = error,
@@ -393,11 +441,21 @@ private fun BooksApp() {
                             typography = typography,
                             onSetTypography = setTypography,
                             onAddBook = launchPicker,
-                            onSelectBook = selectBook,
+                            onSelectBook = {
+                                showLibrary = false
+                                selectBook(it)
+                            },
                             onRemoveBook = removeBook,
-                            modifier = Modifier.width(280.dp).fillMaxHeight(),
-                        )
+                            onSetPinned = { setPinned(it) },
+                            pinned = pinned,
+                            paneColor = Color.Transparent,
+                            modifier = paneModifier,
+                        ) }
+                    }
+                    Row(Modifier.fillMaxSize()) {
+                        if (docked) sidebar(false)
                         if (selectedBook == null) {
+                            panels = null
                             EmptyReader(Modifier.weight(1f).fillMaxHeight())
                         } else {
                             ReaderScreen(
@@ -408,10 +466,32 @@ private fun BooksApp() {
                                 theme = theme,
                                 keepColors = keepColors,
                                 typography = typography,
-                                onBack = null,
+                                onBack = if (pinned) null else ({ showLibrary = true }),
+                                onPanels = { panels = it },
                                 modifier = Modifier.weight(1f).fillMaxHeight(),
                             )
                         }
+                    }
+                    // A strip along the left edge opens the sidebar by drag. It has to
+                    // claim the gesture, or Android's own back swipe eats it first.
+                    if (!docked && !showLibrary) {
+                        Box(
+                            Modifier.fillMaxHeight().width(24.dp)
+                                .align(Alignment.CenterStart)
+                                .systemGestureExclusion()
+                                .draggableFromLeftEdge { showLibrary = true },
+                        )
+                    }
+                    if (!docked && showLibrary) {
+                        // Tap the page to send it away again.
+                        Box(
+                            Modifier.fillMaxSize()
+                                .clickable(
+                                    indication = null,
+                                    interactionSource = remember { MutableInteractionSource() },
+                                ) { showLibrary = false },
+                        )
+                        sidebar(true)
                     }
                 } else if (selectedBook == null) {
                     LibraryPane(
@@ -449,6 +529,96 @@ private fun BooksApp() {
     }
 }
 
+/** Library, chapters and annotations side by side with the page, one tab each. */
+@Composable
+private fun Sidebar(
+    panels: ReaderPanels?,
+    theme: ReaderTheme,
+    /** Floating over the page (unpinned) it lets the text show through; pinned it is solid. */
+    floating: Boolean = false,
+    modifier: Modifier = Modifier,
+    library: @Composable (Modifier) -> Unit,
+) {
+    var tab by rememberSaveable { mutableStateOf(0) }
+    // A closed book has nothing to show in the other two tabs.
+    val tabs = if (panels == null) listOf("Library") else listOf("Library", "Chapters", "Notes")
+    val current = tab.coerceIn(0, tabs.lastIndex)
+    // Floating, it is the same island as the reader chrome: barely translucent, thin
+    // border, rounded — legibility first.
+    Surface(
+        modifier,
+        color = if (floating) theme.sidebar.copy(alpha = 0.94f) else theme.sidebar,
+        shape = if (floating) RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp)
+        else RoundedCornerShape(0.dp),
+        border = if (floating) {
+            BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+        } else null,
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+    ) {
+        Box {
+            // The lists sit in a rounded well, so they read as a panel, not a wall.
+            Box(Modifier.fillMaxSize().padding(4.dp).clip(RoundedCornerShape(16.dp))) {
+                when {
+                    current == 1 && panels != null -> ChaptersScreen(
+                        toc = panels.toc,
+                        onBack = null,
+                        onOpen = panels.openHref,
+                        color = Color.Transparent,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    current == 2 && panels != null -> AnnotationsScreen(
+                        annotations = panels.annotations,
+                        onBack = null,
+                        onExport = panels.onExport,
+                        onImport = panels.onImport,
+                        onSync = panels.onSync,
+                        onSyncWrite = panels.onSyncWrite,
+                        syncLabel = panels.syncLabel,
+                        notice = panels.notice,
+                        onOpen = panels.openCfi,
+                        onRemove = panels.removeAnnotation,
+                        color = Color.Transparent,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    else -> library(Modifier.fillMaxSize())
+                }
+            }
+            if (tabs.size > 1) {
+                // ponytail: translucency, not a real backdrop blur — Compose has no
+                // backdrop RenderEffect. A blur needs a third-party layer (haze).
+                ChromeIsland(
+                    Modifier.align(Alignment.BottomCenter).padding(8.dp).fillMaxWidth(),
+                ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    tabs.forEachIndexed { index, label ->
+                        val selected = index == current
+                        Surface(
+                            onClick = { tab = index },
+                            shape = CircleShape,
+                            color = if (selected) MaterialTheme.colorScheme.secondaryContainer
+                            else Color.Transparent,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.labelLarge,
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                modifier = Modifier.padding(vertical = 10.dp),
+                            )
+                        }
+                    }
+                }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun LibraryPane(
     books: List<BookEntity>,
@@ -465,6 +635,10 @@ private fun LibraryPane(
     onAddBook: () -> Unit,
     onSelectBook: (BookEntity) -> Unit,
     onRemoveBook: (BookEntity) -> Unit,
+    /** Null on a phone, where the library is a screen of its own and never pinned. */
+    onSetPinned: ((Boolean) -> Unit)? = null,
+    pinned: Boolean = true,
+    paneColor: Color = Color.Unspecified,
     modifier: Modifier = Modifier,
 ) {
     var showSettings by remember { mutableStateOf(false) }
@@ -492,11 +666,34 @@ private fun LibraryPane(
             onDismiss = { showSettings = false },
         )
     }
-    Column(modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+    Surface(modifier, color = paneColor.takeOrElse { theme.sidebar }) {
+      Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text("Books", style = MaterialTheme.typography.headlineMedium)
-            IconButton(onClick = { showSettings = true }) {
-                Icon(Icons.Filled.Settings, contentDescription = "Settings")
+            Row {
+                if (onSetPinned != null) {
+                    IconButton(onClick = { onSetPinned(!pinned) }) {
+                        Icon(
+                            painterResource(R.drawable.ic_pin),
+                            contentDescription = if (pinned) {
+                                "Unpin the library, it hides while you read"
+                            } else {
+                                "Pin the library open"
+                            },
+                            // Askew and faded is the unpinned pin, as in GNOME.
+                            modifier = Modifier.rotate(if (pinned) 0f else 45f),
+                            tint = LocalContentColor.current
+                                .copy(alpha = if (pinned) 1f else 0.5f),
+                        )
+                    }
+                }
+                IconButton(onClick = { showSettings = true }) {
+                    Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                }
             }
         }
         Button(onClick = onAddBook) { Text("Add book") }
@@ -507,7 +704,10 @@ private fun LibraryPane(
             Text("Your local library is empty.")
             Text("Add a book to read it offline.")
         } else {
-            LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
+            LazyColumn(
+                Modifier.fillMaxWidth().weight(1f),
+                contentPadding = PaddingValues(bottom = 72.dp),
+            ) {
                 items(books, key = { it.id }) { book ->
                     LibraryBookRow(
                         book = book,
@@ -519,6 +719,7 @@ private fun LibraryPane(
                 }
             }
         }
+      }
     }
 }
 
@@ -531,7 +732,7 @@ private fun LibraryBookRow(
 ) {
     Surface(
         color = if (selected) MaterialTheme.colorScheme.secondaryContainer
-        else MaterialTheme.colorScheme.surface,
+        else Color.Transparent,
         // Long press opens the book's details, the way the ribbon opens bookmarks.
         modifier = Modifier.fillMaxWidth().combinedClickable(
             onClick = onClick,
@@ -737,6 +938,24 @@ private fun EmptyReader(modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * What the open book can offer a panel outside the reader. On a tablet the sidebar draws
+ * these itself, so the chapters and annotations live next to the page instead of over it.
+ */
+private class ReaderPanels(
+    val toc: List<TocEntry>,
+    val annotations: List<JSONObject>,
+    val openHref: (String) -> Unit,
+    val openCfi: (String) -> Unit,
+    val removeAnnotation: (String) -> Unit,
+    val onExport: () -> Unit,
+    val onImport: () -> Unit,
+    val onSync: () -> Unit,
+    val onSyncWrite: () -> Unit,
+    val syncLabel: String,
+    val notice: String,
+)
+
 @Composable
 private fun ReaderScreen(
     book: BookEntity,
@@ -747,6 +966,8 @@ private fun ReaderScreen(
     keepColors: Boolean,
     typography: Typography,
     onBack: (() -> Unit)?,
+    /** Set on a tablet: the sidebar takes over chapters and annotations. */
+    onPanels: ((ReaderPanels) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     var progress by remember(book.id) { mutableStateOf(book.progressFraction) }
@@ -1067,6 +1288,36 @@ private fun ReaderScreen(
             )
         }
 
+        // Hand the panels to whoever draws them outside the reader (the tablet sidebar).
+        if (onPanels != null) {
+            val panels = ReaderPanels(
+                toc = toc,
+                annotations = annotations,
+                openHref = { send(JSONObject().put("type", "GoToHref").put("href", it)) },
+                openCfi = { send(JSONObject().put("type", "GoToCfi").put("cfi", it)) },
+                removeAnnotation = { cfi ->
+                    persistenceScope.launch {
+                        dao.updateAnnotations(book.id, removeAnnotation(annotations, cfi).toString())
+                    }
+                    send(JSONObject().put("type", "Unannotate").put("cfi", cfi))
+                },
+                onExport = { choosingFormat = true },
+                onImport = { importFile.launch(arrayOf("application/json", "text/plain", "*/*")) },
+                onSync = {
+                    val target = syncUri
+                    if (target == null) {
+                        pickSyncFile.launch(arrayOf("application/json", "text/plain", "*/*"))
+                    } else {
+                        syncWithFile(target)
+                    }
+                },
+                onSyncWrite = { syncUri?.let(writeSyncFile) },
+                syncLabel = if (syncUri == null) "Choose sync file" else "Sync now",
+                notice = transferNotice,
+            )
+            SideEffect { onPanels(panels) }
+        }
+
         if (showAnnotations) {
             AnnotationsScreen(
                 annotations = annotations,
@@ -1127,6 +1378,7 @@ private fun ReaderScreen(
                 error = error,
                 bookmarked = bookmarked,
                 onBack = onBack,
+                backIsSidebar = onPanels != null,
                 onToggleBookmark = {
                     val cfi = currentCfi ?: return@ReaderTopBar
                     val updated = if (bookmarked) bookmarks - cfi else bookmarks + cfi
@@ -1221,7 +1473,7 @@ private fun ReaderScreen(
             modifier = Modifier.align(Alignment.BottomCenter),
         ) {
           Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            ChromeIsland {
+            if (onPanels == null) ChromeIsland {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(onClick = { showChapters = true }, enabled = toc.isNotEmpty()) {
                         Text("Chapters")
@@ -1463,7 +1715,7 @@ private fun ImportPreviewDialog(
 @Composable
 private fun AnnotationsScreen(
     annotations: List<JSONObject>,
-    onBack: () -> Unit,
+    onBack: (() -> Unit)?,
     onExport: () -> Unit,
     onImport: () -> Unit,
     onSync: () -> Unit,
@@ -1472,15 +1724,28 @@ private fun AnnotationsScreen(
     notice: String,
     onOpen: (String) -> Unit,
     onRemove: (String) -> Unit,
+    color: Color = Color.Unspecified,
     modifier: Modifier = Modifier,
 ) {
-    Surface(modifier) {
+    Surface(modifier, color = color.takeOrElse { MaterialTheme.colorScheme.surface }) {
         Column {
             ScreenHeader("Annotations", onBack) {
-                PillButton(syncLabel, onSync)
-                if (syncLabel == "Sync now") PillButton("Write", onSyncWrite)
-                PillButton("Import", onImport)
-                PillButton("Export", onExport)
+                // Half and half on the first line, sync across the whole second one:
+                // the sync labels are too wordy to share a row in a 300 dp sidebar.
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    PillButton("Import", onImport, Modifier.weight(1f))
+                    PillButton("Export", onExport, Modifier.weight(1f))
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    PillButton(syncLabel, onSync, Modifier.weight(1f))
+                    if (syncLabel == "Sync now") PillButton("Write", onSyncWrite)
+                }
             }
             if (notice.isNotBlank()) {
                 Text(notice, modifier = Modifier.padding(horizontal = 16.dp))
@@ -1491,7 +1756,7 @@ private fun AnnotationsScreen(
                     modifier = Modifier.padding(16.dp),
                 )
             }
-            LazyColumn(Modifier.fillMaxSize()) {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 72.dp)) {
                 items(annotations.size) { index ->
                     val item = annotations[index]
                     val cfi = item.optString("value")
@@ -1603,17 +1868,19 @@ private fun SpinningPage() {
 
 /** Grey pill, dark label; the same shape the sidebar uses. */
 @Composable
-private fun PillButton(label: String, onClick: () -> Unit) {
+private fun PillButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         contentColor = MaterialTheme.colorScheme.onSurface,
         shape = CircleShape,
-        modifier = Modifier.clickable(onClick = onClick),
+        modifier = modifier.clickable(onClick = onClick),
     ) {
         Text(
             label,
             style = MaterialTheme.typography.labelLarge,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
         )
     }
 }
@@ -1621,21 +1888,27 @@ private fun PillButton(label: String, onClick: () -> Unit) {
 @Composable
 private fun ScreenHeader(
     title: String,
-    onBack: () -> Unit,
+    onBack: (() -> Unit)?,
     actions: @Composable () -> Unit = {},
 ) {
     Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             // Chevron only: the label was pushing the actions off screen, and the
-            // system back button does the same thing.
-            IconButton(onClick = onBack) {
-                Text("‹", style = MaterialTheme.typography.headlineMedium)
+            // system back button does the same thing. In the sidebar there is nothing
+            // to go back to — the tabs underneath are the navigation.
+            if (onBack != null) {
+                IconButton(onClick = onBack) {
+                    Text("‹", style = MaterialTheme.typography.headlineMedium)
+                }
+            } else {
+                Spacer(Modifier.width(8.dp))
             }
             Text(title, style = MaterialTheme.typography.titleLarge)
         }
-        Row(
+        FlowRow(
             Modifier.padding(start = 8.dp, bottom = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) { actions() }
     }
 }
@@ -1643,14 +1916,15 @@ private fun ScreenHeader(
 @Composable
 private fun ChaptersScreen(
     toc: List<TocEntry>,
-    onBack: () -> Unit,
+    onBack: (() -> Unit)?,
     onOpen: (String) -> Unit,
+    color: Color = Color.Unspecified,
     modifier: Modifier = Modifier,
 ) {
-    Surface(modifier) {
+    Surface(modifier, color = color.takeOrElse { MaterialTheme.colorScheme.surface }) {
         Column {
             ScreenHeader("Chapters", onBack)
-            LazyColumn(Modifier.fillMaxSize()) {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 72.dp)) {
                 items(toc.size) { index ->
                     val entry = toc[index]
                     Text(
@@ -1716,29 +1990,45 @@ private fun ReaderTopBar(
     error: String,
     bookmarked: Boolean,
     onBack: (() -> Unit)?,
+    /** On a tablet the arrow does not leave the book, it calls the sidebar over. */
+    backIsSidebar: Boolean,
     onToggleBookmark: () -> Unit,
     onShowBookmarks: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     ChromeIsland(modifier.padding(12.dp)) {
-        Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+        Row(
+            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             if (onBack != null) {
-                TextButton(onClick = onBack) {
-                    Text("‹", style = MaterialTheme.typography.titleLarge)
+                if (backIsSidebar) {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Filled.Menu, contentDescription = "Show the library")
+                    }
+                } else {
+                    TextButton(onClick = onBack) {
+                        Text("‹", style = MaterialTheme.typography.titleLarge)
+                    }
                 }
             }
-            Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
+            Column(
+                Modifier.weight(1f).padding(vertical = 8.dp, horizontal = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
                 Text(
                     text = book.title.ifBlank { "Opening book…" },
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
                 )
                 Text(
                     text = chapter.ifBlank { book.author },
                     style = MaterialTheme.typography.bodySmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
                 )
                 if (error.isNotBlank()) {
                     Text(error, color = MaterialTheme.colorScheme.error, maxLines = 2)
@@ -1926,9 +2216,13 @@ private fun pageLabel(fraction: Double?, page: Int?, pages: Int?, dragging: Bool
 
 /** Floating translucent island, so the page stays readable underneath. */
 @Composable
-private fun ChromeIsland(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+private fun ChromeIsland(
+    modifier: Modifier = Modifier,
+    alpha: Float = 0.94f,
+    content: @Composable () -> Unit,
+) {
     Surface(
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = alpha),
         shape = RoundedCornerShape(24.dp),
         // No shadow: a shadow cast over the WebView leaves white artefacts on it.
         tonalElevation = 0.dp,
@@ -2273,3 +2567,23 @@ private fun jsonResponse(json: String) = WebResourceResponse(
     "UTF-8",
     ByteArrayInputStream(json.toByteArray()),
 )
+
+/** A drag that starts within a finger's width of the left edge, as GNOME opens a sidebar. */
+private fun Modifier.draggableFromLeftEdge(onOpen: () -> Unit): Modifier = pointerInput(Unit) {
+    awaitPointerEventScope {
+        while (true) {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            if (down.position.x > 24.dp.toPx()) continue
+            var travelled = 0f
+            do {
+                val event = awaitPointerEvent()
+                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                travelled += change.position.x - change.previousPosition.x
+                if (travelled > 40.dp.toPx()) {
+                    onOpen()
+                    break
+                }
+            } while (change.pressed)
+        }
+    }
+}
