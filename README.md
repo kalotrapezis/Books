@@ -78,6 +78,19 @@ MOBI/AZW3 on a real file; OPDS catalogs (they need an Internet permission this
 app does not ask for); Calibre's embedded highlights; automatic backup and
 restore. See [Plan.md](Plan.md) for the phase-by-phase plan.
 
+## Syncing with Foliate on Linux
+
+`linux/books-sync` is a small script that merges Foliate's annotations with the
+`Books/<title>/annotations.json` folders through whatever already syncs them. No
+server, no account, no fork of Foliate:
+
+```bash
+cd linux && ./install.sh ~/Sync/Books
+```
+
+It installs into `~/.local/bin` and runs as a `systemd --user` service. See
+[linux/README.md](linux/README.md).
+
 ## Security
 
 EPUBs are untrusted HTML, so the reader runs in a WebView with no file or

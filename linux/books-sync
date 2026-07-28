@@ -1,0 +1,258 @@
+#!/usr/bin/env python3
+"""Keep Foliate on this machine and Books on Android holding the same annotations.
+
+Books writes one folder per book inside a folder you already sync (Syncthing,
+Nextcloud):
+
+    <synced folder>/The Brothers Karamazov/annotations.json
+
+Foliate keeps one file per book in its own data directory, named after the
+book's identifier, in the same format. This carries changes both ways: it
+merges the two files the way both apps do — annotations matched on `value`,
+the newer `modified` winning, deletions remembered — and writes the result
+back to whichever side is behind.
+
+No server, no account, no daemon of ours: Syncthing moves the bytes, this only
+decides what the file should say. Run it once, or with --watch to keep going.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import sys
+import time
+import urllib.parse
+from datetime import datetime, timezone
+from pathlib import Path
+
+TOMBSTONES = "booksDeleted"
+SYNC_FILE = "annotations.json"
+ILLEGAL = set('\\/:*?"<>|')
+
+FOLIATE_DIRS = [
+    Path.home()
+    / ".var/app/com.github.johnfactotum.Foliate/data/com.github.johnfactotum.Foliate",
+    Path.home() / ".local/share/com.github.johnfactotum.Foliate",
+]
+
+
+def foliate_dir() -> Path:
+    for candidate in FOLIATE_DIRS:
+        if candidate.is_dir():
+            return candidate
+    sys.exit(
+        "Foliate's data folder was not found. Looked in:\n  "
+        + "\n  ".join(str(d) for d in FOLIATE_DIRS)
+    )
+
+
+def folder_name(title: str) -> str:
+    """The same name Books gives a book's folder, so both sides agree."""
+    cleaned = []
+    for character in title.strip():
+        safe = " " if character in ILLEGAL or ord(character) < 32 else character
+        if safe == " " and (not cleaned or cleaned[-1] == " "):
+            continue
+        cleaned.append(safe)
+    # Trimmed after the cut as well: an 80th character that lands on a space would
+    # otherwise leave the folder named with a trailing one.
+    return "".join(cleaned).strip(" .")[:80].rstrip(" .") or "Untitled book"
+
+
+def read_json(path: Path) -> dict:
+    try:
+        with path.open(encoding="utf-8") as handle:
+            loaded = json.load(handle)
+        return loaded if isinstance(loaded, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def write_json(path: Path, data: dict) -> None:
+    """Write beside the target and move into place, so a reader never sees half."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".part")
+    with temporary.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, ensure_ascii=False, indent=2)
+    temporary.replace(path)
+
+
+def graves_of(data: dict) -> dict[str, str]:
+    graves = data.get(TOMBSTONES)
+    return {k: v for k, v in graves.items() if v} if isinstance(graves, dict) else {}
+
+
+def merge(left: dict, right: dict) -> dict:
+    """Both files into one. Same rule as the app: newest `modified` per `value`."""
+    merged = dict(right) | dict(left)  # left's own fields win, right fills the gaps
+
+    graves: dict[str, str] = {}
+    for side in (graves_of(left), graves_of(right)):
+        for value, deleted in side.items():
+            if deleted >= graves.get(value, ""):
+                graves[value] = deleted
+
+    by_value: dict[str, dict] = {}
+    for item in list(right.get("annotations") or []) + list(left.get("annotations") or []):
+        if not isinstance(item, dict):
+            continue
+        value = item.get("value")
+        if not value:
+            continue
+        seen = by_value.get(value)
+        if seen is None or str(item.get("modified", "")) >= str(seen.get("modified", "")):
+            by_value[value] = item
+
+    # A deletion beats an annotation that has not been touched since it was deleted.
+    for value, deleted in graves.items():
+        kept = by_value.get(value)
+        if kept is not None and str(kept.get("modified", "")) <= deleted:
+            del by_value[value]
+
+    bookmarks = list(dict.fromkeys(
+        [b for b in (right.get("bookmarks") or []) if isinstance(b, str)]
+        + [b for b in (left.get("bookmarks") or []) if isinstance(b, str)]
+    ))
+
+    merged["annotations"] = list(by_value.values())
+    if bookmarks or "bookmarks" in left or "bookmarks" in right:
+        merged["bookmarks"] = bookmarks
+    if graves:
+        merged[TOMBSTONES] = graves
+    else:
+        merged.pop(TOMBSTONES, None)
+    return merged
+
+
+def same(left: dict, right: dict) -> bool:
+    """Equal for our purposes: an empty list and a missing one say the same thing,
+    and neither is worth rewriting a file for."""
+    def bare(data: dict) -> dict:
+        return {k: v for k, v in data.items() if v not in ([], {}, None)}
+
+    return json.dumps(bare(left), sort_keys=True) == json.dumps(bare(right), sort_keys=True)
+
+
+def back_up(path: Path, keep: int = 5) -> None:
+    """A copy before anything is overwritten, the way the app copies before a merge."""
+    if not path.exists():
+        return
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    backups = path.parent / ".books-backups"
+    backups.mkdir(exist_ok=True)
+    shutil.copy2(path, backups / f"{path.stem}-{stamp}.json")
+    old = sorted(backups.glob(f"{path.stem}-*.json"))[:-keep]
+    for stale in old:
+        stale.unlink(missing_ok=True)
+
+
+def android_file(root: Path, title: str) -> Path:
+    return root / folder_name(title) / SYNC_FILE
+
+
+def sync_once(root: Path, data_dir: Path, dry_run: bool = False) -> int:
+    """Returns how many books changed on either side."""
+    changed = 0
+    seen: set[Path] = set()
+
+    for source in sorted(data_dir.glob("*.json")):
+        book = read_json(source)
+        metadata = book.get("metadata") or {}
+        title = str(metadata.get("title") or "").strip()
+        if not title:
+            # No title, no folder a person could recognise: fall back to the identifier.
+            title = urllib.parse.unquote(source.stem)
+        target = android_file(root, title)
+        seen.add(target)
+
+        phone = read_json(target)
+        merged = merge(book, phone)
+
+        if not same(merged, book):
+            print(f"→ Foliate  {title}")
+            if not dry_run:
+                back_up(source)
+                write_json(source, merged)
+            changed += 1
+        if not same(merged, phone):
+            print(f"→ Android  {title}")
+            if not dry_run:
+                back_up(target)
+                write_json(target, merged)
+            changed += 1
+
+    # A book that only Android knows about: leave it be, but say so — its file has
+    # no identifier we can turn into a Foliate filename without opening the book.
+    for folder in sorted(p for p in root.iterdir() if p.is_dir()):
+        candidate = folder / SYNC_FILE
+        if candidate.exists() and candidate not in seen:
+            print(f"  only on Android, not touched: {folder.name}")
+
+    return changed
+
+
+def watch(root: Path, data_dir: Path, interval: float) -> None:
+    print(f"Watching {root} and {data_dir} every {interval:g}s. Ctrl-C to stop.")
+    fingerprint = None
+    while True:
+        current = sorted(
+            (str(p), p.stat().st_mtime_ns)
+            for p in list(root.glob(f"*/{SYNC_FILE}")) + list(data_dir.glob("*.json"))
+        )
+        if current != fingerprint:
+            # Let a writer finish before reading: Syncthing writes then renames, and
+            # Foliate saves on close.
+            time.sleep(1.0)
+            if sync_once(root, data_dir):
+                print(f"  {datetime.now().strftime('%H:%M:%S')} synced")
+            fingerprint = sorted(
+                (str(p), p.stat().st_mtime_ns)
+                for p in list(root.glob(f"*/{SYNC_FILE}")) + list(data_dir.glob("*.json"))
+            )
+        time.sleep(interval)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Sync Foliate's annotations with the Books folder on Android.",
+    )
+    parser.add_argument(
+        "folder",
+        nargs="?",
+        default=os.environ.get("BOOKS_SYNC_FOLDER"),
+        help="the synced folder holding one directory per book "
+        "(or set BOOKS_SYNC_FOLDER)",
+    )
+    parser.add_argument("--watch", action="store_true", help="keep running")
+    parser.add_argument(
+        "--interval", type=float, default=5.0, help="seconds between checks with --watch"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="say what would change, write nothing"
+    )
+    arguments = parser.parse_args()
+
+    if not arguments.folder:
+        parser.error("give the synced folder, or set BOOKS_SYNC_FOLDER")
+    root = Path(arguments.folder).expanduser()
+    if not root.is_dir():
+        return print(f"{root} is not a folder") or 1
+
+    data_dir = foliate_dir()
+    if arguments.watch:
+        try:
+            watch(root, data_dir, arguments.interval)
+        except KeyboardInterrupt:
+            print()
+        return 0
+
+    changed = sync_once(root, data_dir, arguments.dry_run)
+    print("Nothing to do." if not changed else f"{changed} file(s) written.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
