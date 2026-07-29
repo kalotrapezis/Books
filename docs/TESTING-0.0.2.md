@@ -155,7 +155,11 @@ already; the rest need your real device and real files.
 47. With the keyboard up, the island lifts above it and Save stays reachable.
 48. Tablet: the sidebar is untouched, and the island carries the book's own
     controls at the bottom of the page.
-49. Scrolled mode: no seek row in the island, the scrub handle is still at the
+49. Select text low on the page: the island moves to the top so it is not sitting
+    on the words you just chose. Select high up: it stays at the bottom. A
+    paginated book has nothing to scroll out of the way, which is why the island
+    moves for this one case and nothing else.
+50. Scrolled mode: no seek row in the island, the scrub handle is still at the
     left edge, and read aloud is still in the island.
 
 ## Known gaps, not bugs to report

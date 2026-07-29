@@ -1586,15 +1586,19 @@ private fun ReaderScreen(
             )
         }
 
-        // One island, at the bottom, in reach of a thumb. What it holds changes with
-        // what you are doing — reading, a selection, writing a note — but it never
-        // moves, so nothing appears from a direction you were not looking at.
+        // One island. It lives at the bottom, in reach of a thumb, and only steps
+        // aside for a selection in the lower half of the page — it would otherwise
+        // cover the words you just chose, and a paginated book has nothing to scroll
+        // out of its way.
         val current = selection
+        val onTop = current != null && selectionLower
         AnimatedVisibility(
             visible = chromeVisible,
-            enter = fadeIn() + slideInVertically { it },
-            exit = fadeOut() + slideOutVertically { it },
-            modifier = Modifier.align(Alignment.BottomCenter),
+            enter = fadeIn() + slideInVertically { if (onTop) -it else it },
+            exit = fadeOut() + slideOutVertically { if (onTop) -it else it },
+            modifier = Modifier.align(
+                if (onTop) Alignment.TopCenter else Alignment.BottomCenter,
+            ),
         ) {
             ChromeIsland(Modifier.padding(12.dp).widthIn(max = 560.dp)) {
                 Column(
