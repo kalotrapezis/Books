@@ -413,6 +413,26 @@ random-access loader.
 - Εκκρεμούν: versioned backup/restore όλης της βιβλιοθήκης, Linux helper για
   progress/bookmarks, WebDAV/Nextcloud.
 
+Τρέχουσα πρόοδος:
+
+- Ο συγχρονισμός γίνεται σε φάκελο που ήδη συγχρονίζεται, με έναν κατάλογο ανά
+  βιβλίο (`<φάκελος>/<τίτλος>/annotations.json`), ώστε να μπορεί κανείς να
+  αφήσει ένα αρχείο μέσα από το desktop με το χέρι.
+- Tombstones: η διαγραφή μιας επισήμανσης καταγράφεται και επιβιώνει του
+  επόμενου merge, αντί να επιστρέφει από την άλλη πλευρά.
+- Αντίγραφο των δεδομένων του βιβλίου πριν από κάθε merge.
+- Linux helper: το `linux/books-sync` συγχωνεύει τα αρχεία του Foliate με τους
+  φακέλους του Books και γράφει πίσω σε όποια πλευρά υστερεί, με τον ίδιο
+  κανόνα (`value` + `modified`, tombstones, ένωση bookmarks). Εγκαθίσταται ως
+  `systemd --user` service με το `linux/install.sh`, χωρίς root και χωρίς
+  server. Δεν χρειάζεται fork του Foliate· το μόνο που δεν καλύπτει είναι η
+  ζωντανή ανανέωση ενός βιβλίου που το Foliate έχει ήδη ανοιχτό.
+- Δοκιμές: `linux/test_books_sync.py` (κανόνας merge προς τις δύο κατευθύνσεις,
+  διαγραφές, bookmarks, άγνωστα πεδία, ονόματα φακέλων, πλήρης κύκλος σε
+  πραγματικά αρχεία) και επαλήθευση σε αντίγραφο των πραγματικών δεδομένων
+  Foliate (567 annotations).
+- Εκκρεμεί: WebDAV/Nextcloud χωρίς Syncthing, και ζωντανό reload στο Foliate.
+
 ### Φάση 6 — Σταθεροποίηση και release
 
 - Unit, lint, UI και accessibility tests.

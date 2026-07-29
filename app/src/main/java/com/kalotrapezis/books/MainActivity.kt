@@ -683,6 +683,7 @@ private fun LibraryPane(
     modifier: Modifier = Modifier,
 ) {
     var showSettings by remember { mutableStateOf(false) }
+    var showAbout by remember { mutableStateOf(false) }
     var details by remember { mutableStateOf<BookEntity?>(null) }
     details?.let { book ->
         BookDetailsDialog(
@@ -692,6 +693,19 @@ private fun LibraryPane(
                 details = null
             },
             onDismiss = { details = null },
+        )
+    }
+    val libraryContext = LocalContext.current
+    if (showAbout) {
+        AboutDialog(
+            onOpenLink = { url ->
+                // No network permission here either: the link goes to whichever app
+                // the user already trusts with the web.
+                runCatching {
+                    libraryContext.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                }
+            },
+            onDismiss = { showAbout = false },
         )
     }
     if (showSettings) {
@@ -758,9 +772,24 @@ private fun LibraryPane(
                     )
                     HorizontalDivider()
                 }
+                item { AboutLink { showAbout = true } }
             }
         }
+        // With no books there is no list to put it at the foot of.
+        if (books.isEmpty()) AboutLink { showAbout = true }
       }
+    }
+}
+
+/** Small and last, under the books: what this is and which build it is. */
+@Composable
+private fun AboutLink(onClick: () -> Unit) {
+    TextButton(onClick = onClick, modifier = Modifier.padding(top = 4.dp)) {
+        Text(
+            "About Books ${BuildConfig.VERSION_NAME}",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -892,6 +921,13 @@ internal fun SettingsDialog(
                 Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
+                // Which build this is. An APK sitting in a download folder and a
+                // build put on over a cable are far too easy to mix up.
+                Text(
+                    "Books ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Row(
                     Modifier.fillMaxWidth().clickable { onSetScrolled(!scrolled) },
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1579,141 +1615,156 @@ private fun ReaderScreen(
             )
         }
 
+        // One island. It lives at the bottom, in reach of a thumb, and only steps
+        // aside for a selection in the lower half of the page — it would otherwise
+        // cover the words you just chose, and a paginated book has nothing to scroll
+        // out of its way.
+        val current = selection
+        val onTop = current != null && selectionLower
         AnimatedVisibility(
             visible = chromeVisible,
-            enter = fadeIn() + slideInVertically { -it },
-            exit = fadeOut() + slideOutVertically { -it },
-            modifier = Modifier.align(Alignment.TopCenter),
+            enter = fadeIn() + slideInVertically { if (onTop) -it else it },
+            exit = fadeOut() + slideOutVertically { if (onTop) -it else it },
+            modifier = Modifier.align(
+                if (onTop) Alignment.TopCenter else Alignment.BottomCenter,
+            ),
         ) {
-            ReaderTopBar(
-                book = book,
-                chapter = chapter,
-                error = error,
-                bookmarked = bookmarked,
-                onBack = onBack,
-                backIsSidebar = onPanels != null,
-                onToggleBookmark = {
-                    val cfi = currentCfi ?: return@ReaderTopBar
-                    val updated = if (bookmarked) bookmarks - cfi else bookmarks + cfi
-                    persistenceScope.launch {
-                        dao.updateBookmarks(book.id, JSONArray(updated).toString())
-                    }
-                },
-                onShowBookmarks = { showBookmarks = true },
-                speaking = speaking,
-                onToggleSpeaking = toggleSpeaking,
-            )
-        }
-        val current = selection
-        if (current != null) {
-            Box(
-                Modifier.align(
-                    if (selectionLower) Alignment.TopCenter else Alignment.BottomCenter,
-                ).padding(vertical = 72.dp),
-            ) {
-                SelectionPanel(
-                    excerpt = current.second,
-                    note = annotations.noteFor(current.first),
-                    onHighlight = { color, note ->
-                        val (cfi, selected) = current
-                        persistenceScope.launch {
-                            dao.updateAnnotations(
-                                book.id,
-                                addAnnotation(annotations, cfi, color, selected, note).toString(),
-                            )
-                        }
-                        send(
-                            if (color == null) {
-                                JSONObject().put("type", "Unannotate").put("cfi", cfi)
-                            } else {
-                                JSONObject().put("type", "Annotate")
-                                    .put("cfi", cfi).put("color", color)
+            ChromeIsland(Modifier.padding(12.dp).widthIn(max = 560.dp)) {
+                Column(
+                    Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    IslandHeader(
+                        book = book,
+                        chapter = chapter,
+                        error = error,
+                        page = when {
+                            printPage.isNotBlank() -> "Page $printPage"
+                            page != null && pages != null -> "$page / $pages"
+                            else -> ""
+                        },
+                        bookmarked = bookmarked,
+                        onBack = onBack,
+                        backIsSidebar = onPanels != null,
+                        onToggleBookmark = {
+                            val cfi = currentCfi ?: return@IslandHeader
+                            val updated = if (bookmarked) bookmarks - cfi else bookmarks + cfi
+                            persistenceScope.launch {
+                                dao.updateBookmarks(book.id, JSONArray(updated).toString())
+                            }
+                        },
+                        onShowBookmarks = { showBookmarks = true },
+                    )
+                    if (current != null) {
+                        SelectionPanel(
+                            excerpt = current.second,
+                            note = annotations.noteFor(current.first),
+                            speaking = speaking,
+                            onToggleSpeaking = toggleSpeaking,
+                            onHighlight = { color, note ->
+                                val (cfi, selected) = current
+                                persistenceScope.launch {
+                                    dao.updateAnnotations(
+                                        book.id,
+                                        addAnnotation(annotations, cfi, color, selected, note)
+                                            .toString(),
+                                    )
+                                }
+                                send(
+                                    if (color == null) {
+                                        JSONObject().put("type", "Unannotate").put("cfi", cfi)
+                                    } else {
+                                        JSONObject().put("type", "Annotate")
+                                            .put("cfi", cfi).put("color", color)
+                                    },
+                                )
+                                sendCommand("ClearSelection")
+                                selection = null
+                            },
+                            onCopy = {
+                                clipboard.setText(AnnotatedString(current.second))
+                                sendCommand("ClearSelection")
+                                selection = null
+                            },
+                            onCite = {
+                                clipboard.setText(
+                                    AnnotatedString(
+                                        "“${current.second}”\n— ${book.title}" +
+                                            (if (book.author.isBlank()) "" else ", ${book.author}") +
+                                            "\n${current.first}",
+                                    ),
+                                )
+                                sendCommand("ClearSelection")
+                                selection = null
+                            },
+                            onLookUp = { service ->
+                                // No network permission here: the selection is handed to
+                                // whichever app the user already trusts with the web.
+                                val query = Uri.encode(current.second.take(200))
+                                val language = java.util.Locale.getDefault().language
+                                val url = when (service) {
+                                    "wikipedia" ->
+                                        "https://$language.wikipedia.org/wiki/Special:Search?search=$query"
+                                    "translate" ->
+                                        "https://translate.google.com/?sl=auto&tl=$language&text=$query"
+                                    else ->
+                                        "https://$language.wiktionary.org/wiki/Special:Search?search=$query"
+                                }
+                                runCatching {
+                                    readerContext.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse(url)),
+                                    )
+                                }.onFailure { error = "No app can open links." }
+                            },
+                            onShare = {
+                                val share = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, current.second)
+                                    putExtra(Intent.EXTRA_SUBJECT, book.title)
+                                }
+                                readerContext.startActivity(Intent.createChooser(share, null))
+                            },
+                            onDismiss = {
+                                sendCommand("ClearSelection")
+                                selection = null
                             },
                         )
-                        sendCommand("ClearSelection")
-                        selection = null
-                    },
-                    onCopy = {
-                        clipboard.setText(AnnotatedString(current.second))
-                        sendCommand("ClearSelection")
-                        selection = null
-                    },
-                    onCite = {
-                        clipboard.setText(
-                            AnnotatedString(
-                                "“${current.second}”\n— ${book.title}" +
-                                    (if (book.author.isBlank()) "" else ", ${book.author}") +
-                                    "\n${current.first}",
-                            ),
-                        )
-                        sendCommand("ClearSelection")
-                        selection = null
-                    },
-                    onLookUp = { service ->
-                        // No network permission here: the selection is handed to whichever
-                        // app the user already trusts with the web.
-                        val query = Uri.encode(current.second.take(200))
-                        val language = java.util.Locale.getDefault().language
-                        val url = when (service) {
-                            "wikipedia" ->
-                                "https://$language.wikipedia.org/wiki/Special:Search?search=$query"
-                            "translate" ->
-                                "https://translate.google.com/?sl=auto&tl=$language&text=$query"
-                            else -> "https://$language.wiktionary.org/wiki/Special:Search?search=$query"
+                    } else {
+                        // The tablet keeps these in its sidebar, beside the page.
+                        if (onPanels == null) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                TextButton(
+                                    onClick = { showChapters = true },
+                                    enabled = toc.isNotEmpty(),
+                                ) { Text("Chapters") }
+                                TextButton(onClick = { showAnnotations = true }) { Text("Notes") }
+                                TextButton(onClick = { showSearch = true }) { Text("Search") }
+                            }
                         }
-                        runCatching {
-                            readerContext.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                        }.onFailure { error = "No app can open links." }
-                    },
-                    onShare = {
-                        val share = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_TEXT, current.second)
-                            putExtra(Intent.EXTRA_SUBJECT, book.title)
+                        if (!scrolling) {
+                            ReaderControls(
+                                progress = progress,
+                                enabled = bridge != null && readerReady,
+                                onPrevious = { sendCommand("Previous") },
+                                onNext = { sendCommand("Next") },
+                                onSeek = {
+                                    send(
+                                        JSONObject().put("type", "GoToFraction")
+                                            .put("fraction", it),
+                                    )
+                                },
+                                pages = pages,
+                                speaking = speaking,
+                                onToggleSpeaking = toggleSpeaking,
+                            )
+                        } else {
+                            // Scrolled mode has no pages to seek through, but read aloud
+                            // still belongs in reach.
+                            SpeakButton(speaking, toggleSpeaking, size = 48.dp)
                         }
-                        readerContext.startActivity(Intent.createChooser(share, null))
-                    },
-                    onDismiss = {
-                        sendCommand("ClearSelection")
-                        selection = null
-                    },
-                )
-            }
-        }
-
-        AnimatedVisibility(
-            visible = chromeVisible && selection == null,
-            enter = fadeIn() + slideInVertically { it },
-            exit = fadeOut() + slideOutVertically { it },
-            modifier = Modifier.align(Alignment.BottomCenter),
-        ) {
-          Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            if (onPanels == null) ChromeIsland {
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(onClick = { showChapters = true }, enabled = toc.isNotEmpty()) {
-                        Text("Chapters")
                     }
-                    TextButton(onClick = { showAnnotations = true }) { Text("Notes") }
-                    TextButton(onClick = { showSearch = true }) { Text("Search") }
                 }
             }
-            if (!scrolling) {
-                ReaderControls(
-                    progress = progress,
-                    printPage = printPage,
-                    page = page,
-                    pages = pages,
-                    enabled = bridge != null && readerReady,
-                    onPrevious = { sendCommand("Previous") },
-                    onNext = { sendCommand("Next") },
-                    onSeek = {
-                        send(JSONObject().put("type", "GoToFraction").put("fraction", it))
-                    },
-                    speaking = speaking,
-                    onToggleSpeaking = toggleSpeaking,
-                )
-            }
-          }
         }
 
         // Scrolled mode scrubs from the side, so the toolbar keeps the bottom.
@@ -1754,6 +1805,8 @@ private fun highlightSwatch(name: String): Color? =
 internal fun SelectionPanel(
     excerpt: String,
     note: String,
+    speaking: Boolean = false,
+    onToggleSpeaking: (() -> Unit)? = null,
     onHighlight: (String?, String) -> Unit,
     onCopy: () -> Unit,
     onCite: () -> Unit,
@@ -1766,14 +1819,9 @@ internal fun SelectionPanel(
     val focus = remember { FocusRequester() }
     LaunchedEffect(writing) { if (writing) focus.requestFocus() }
 
-    ChromeIsland(Modifier.padding(bottom = 8.dp).widthIn(max = 420.dp).fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                excerpt,
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-            )
+    // No echo of the selected text: it is already on the page, highlighted, and the
+    // room it took is the room Save and Cancel needed.
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1798,6 +1846,10 @@ internal fun SelectionPanel(
                         end = Offset(size.width * 0.8f, size.height * 0.2f),
                         strokeWidth = 5f,
                     )
+                }
+                if (onToggleSpeaking != null) {
+                    Spacer(Modifier.weight(1f))
+                    SpeakButton(speaking, onToggleSpeaking)
                 }
             }
             // Writing a note, everything else steps out of the way: the whole row of
@@ -1836,7 +1888,70 @@ internal fun SelectionPanel(
                     TextButton(onClick = onDismiss) { Text("Cancel") }
                 }
             }
-        }
+    }
+}
+
+/**
+ * What this is, whose work it stands on, and which build you are holding. Reached
+ * from the foot of the library, where it is out of the way but findable.
+ */
+@Composable
+internal fun AboutDialog(onOpenLink: (String) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        title = { Text("Books ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})") },
+        text = {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    "An offline reader for EPUB, PDF, comics and more, speaking " +
+                        "Foliate's reading data so highlights, notes, bookmarks and " +
+                        "your place move between a desktop and this device.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    "An independent project. Not an official Foliate application. " +
+                        "No DRM, and no Internet permission: links and lookups are " +
+                        "handed to apps that already have it.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                AboutLine("Licence", "GPL-3.0-or-later")
+                AboutLine("Reader engine", "foliate-js, MIT")
+                AboutLine("Archives", "zip.js, BSD-3-Clause · fflate, MIT")
+                AboutLine("PDF", "PDF.js, Apache-2.0")
+                AboutLine("Interface", "AndroidX and Jetpack Compose, Apache-2.0")
+                Text(
+                    "Every notice is kept in THIRD_PARTY_NOTICES.md beside the source.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(
+                    onClick = { onOpenLink("https://github.com/kalotrapezis/Books") },
+                    contentPadding = PaddingValues(0.dp),
+                ) { Text("Source, releases and issues") }
+                TextButton(
+                    onClick = {
+                        onOpenLink("https://johnfactotum.github.io/foliate/")
+                    },
+                    contentPadding = PaddingValues(0.dp),
+                ) { Text("Foliate, the reader this one follows") }
+            }
+        },
+    )
+}
+
+@Composable
+private fun AboutLine(label: String, value: String) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(value, style = MaterialTheme.typography.labelMedium)
     }
 }
 
@@ -2401,23 +2516,22 @@ internal fun BookmarksDialog(
 }
 
 @Composable
-internal fun ReaderTopBar(
+internal fun IslandHeader(
     book: BookEntity,
     chapter: String,
     error: String,
+    /** "1463 / 5416", or a printed page number when the book carries them. */
+    page: String,
     bookmarked: Boolean,
     onBack: (() -> Unit)?,
     /** On a tablet the arrow does not leave the book, it calls the sidebar over. */
     backIsSidebar: Boolean,
     onToggleBookmark: () -> Unit,
     onShowBookmarks: () -> Unit,
-    speaking: Boolean,
-    onToggleSpeaking: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    ChromeIsland(modifier.padding(12.dp)) {
-        Row(
-            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+    Row(
+            modifier.padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (onBack != null) {
@@ -2456,7 +2570,14 @@ internal fun ReaderTopBar(
                     Text(error, color = MaterialTheme.colorScheme.error, maxLines = 2)
                 }
             }
-            SpeakButton(speaking, onToggleSpeaking, Modifier.padding(end = 8.dp))
+            if (page.isNotBlank()) {
+                Text(
+                    page,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 4.dp),
+                )
+            }
             Ribbon(
                 filled = bookmarked,
                 label = if (bookmarked) "Remove this bookmark, long press for the list"
@@ -2471,7 +2592,6 @@ internal fun ReaderTopBar(
                     .padding(start = 8.dp, end = 16.dp)
                     .size(width = 24.dp, height = 40.dp),
             )
-        }
     }
 }
 
@@ -2596,8 +2716,6 @@ private fun ScrubHandle(
 @Composable
 private fun ReaderControls(
     progress: Double?,
-    printPage: String,
-    page: Int?,
     pages: Int?,
     enabled: Boolean,
     onPrevious: () -> Unit,
@@ -2610,18 +2728,7 @@ private fun ReaderControls(
     var dragged by remember { mutableStateOf<Float?>(null) }
     val haptics = LocalHapticFeedback.current
     var lastTickedPage by remember { mutableStateOf<Int?>(null) }
-    val shown = dragged?.toDouble() ?: progress
-    ChromeIsland(modifier.padding(12.dp)) {
-        Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-            Text(
-                text = if (printPage.isNotBlank() && dragged == null) "Page $printPage"
-                    else pageLabel(shown, page, pages, dragged != null),
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // The same control as the top bar's, bigger, and here it stays in reach
-                // while the page is being read.
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
                 SpeakButton(
                     speaking = speaking,
                     onToggle = onToggleSpeaking,
@@ -2666,8 +2773,6 @@ private fun ReaderControls(
                 ) {
                     Text("›", style = MaterialTheme.typography.headlineMedium)
                 }
-            }
-        }
     }
 }
 
@@ -2863,16 +2968,28 @@ private fun ReaderView(
                 // The action mode dies for three different reasons: the selection was
                 // tapped away, its handles were grabbed, or the panel took focus. Only
                 // the page knows which, so it is asked rather than guessed at.
-                private val clearIfStillOnThePage = { onSelectionEnded() }
+                // The action mode ends for three different reasons and only two of
+                // them mean the selection is over. While the page still holds focus,
+                // ask it what is selected — a handle being dragged ends the mode too,
+                // and the selection survives it. When our own UI took the focus, the
+                // note field being the one that does, leave the selection alone: the
+                // page reports nothing selected while it is not focused, which would
+                // close the panel the moment the field opened.
+                private val askThePageIfItStillHasFocus = {
+                    if (hasFocus()) onSelectionEnded()
+                }
 
                 override fun startActionMode(callback: ActionMode.Callback?): ActionMode? =
-                    super.startActionMode(EmptyMenu(callback, clearIfStillOnThePage))
+                    super.startActionMode(EmptyMenu(callback, askThePageIfItStillHasFocus))
 
                 override fun startActionMode(
                     callback: ActionMode.Callback?,
                     type: Int,
                 ): ActionMode? =
-                    super.startActionMode(EmptyMenu(callback, clearIfStillOnThePage), type)
+                    super.startActionMode(
+                        EmptyMenu(callback, askThePageIfItStillHasFocus),
+                        type,
+                    )
             }.apply {
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 isVerticalScrollBarEnabled = false

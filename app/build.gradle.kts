@@ -12,13 +12,16 @@ android {
         applicationId = "com.kalotrapezis.books"
         minSdk = 24
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.0.4"
+        versionCode = 5
+        versionName = "0.0.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildFeatures {
         compose = true
+        // So the app can say which build it is: an APK on a device and a build
+        // installed over a cable are easy to mix up.
+        buildConfig = true
     }
 
     sourceSets.named("main") {

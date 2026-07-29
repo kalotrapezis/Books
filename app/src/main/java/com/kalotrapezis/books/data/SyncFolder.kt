@@ -77,7 +77,9 @@ object SyncFolder {
                 if (safe == ' ' && (isEmpty() || last() == ' ')) continue
                 append(safe)
             }
-        }.trim(' ', '.').take(80)
+            // Trimmed after the cut as well: an 80th character that lands on a space
+            // would otherwise leave the folder named with a trailing one.
+        }.trim(' ', '.').take(80).trimEnd(' ', '.')
         return cleaned.ifBlank { "Untitled book" }
     }
 }
