@@ -892,6 +892,13 @@ internal fun SettingsDialog(
                 Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
+                // Which build this is. An APK sitting in a download folder and a
+                // build put on over a cable are far too easy to mix up.
+                Text(
+                    "Books ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Row(
                     Modifier.fillMaxWidth().clickable { onSetScrolled(!scrolled) },
                     horizontalArrangement = Arrangement.SpaceBetween,

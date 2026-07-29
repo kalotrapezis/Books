@@ -19,6 +19,9 @@ android {
 
     buildFeatures {
         compose = true
+        // So the app can say which build it is: an APK on a device and a build
+        // installed over a cable are easy to mix up.
+        buildConfig = true
     }
 
     sourceSets.named("main") {
