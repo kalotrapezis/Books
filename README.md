@@ -12,7 +12,7 @@ This is an independent project. It is not an official Foliate application.
 No DRM. No network permission.
 
 - Branch: `android-dev`
-- Version: 0.0.5
+- Version: 0.0.6
 - Licence: `GPL-3.0-or-later`
 
 ## Screenshots
@@ -119,6 +119,23 @@ The second command needs a device or emulator. On MIUI/HyperOS also enable
 Developer options → Install via USB.
 
 ## Changelog
+
+### 0.0.6 — 2026-07-29
+
+Two fixes: the text settings, and the island's exit.
+
+- **Text size, line spacing and font family now reach the page.** They were
+  read, checked and remembered, and then never written into a stylesheet —
+  only the margin ever reached the renderer. So the one setting that did apply
+  moved the layout under a paginator that never re-measured, and the book lost
+  count of its own pages: forward and back went wherever the stale numbers
+  pointed. All four settings are applied now, and the page re-measures and
+  keeps your place when you change them.
+- **The island leaves once.** It read its side of the screen from the live
+  selection, and a tap clears the selection and hides the controls in the same
+  frame — so halfway through sliding out of the top it decided it belonged at
+  the bottom, and played its exit a second time down there. It now holds the
+  side it arrived on until it is gone.
 
 ### 0.0.5 — 2026-07-29
 

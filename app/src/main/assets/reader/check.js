@@ -658,6 +658,10 @@ function setTypography(settings) {
         view.renderer.setAttribute('margin', `${settings.margin}px`)
     }
     applyStyles()
+    // Styles alone leave the paginator measuring the old text: its columns, page
+    // count and scroll offset all stay as they were, so paging goes wherever the
+    // stale numbers point. render() re-measures and puts the current anchor back.
+    requestAnimationFrame(() => view?.renderer?.render?.())
 }
 
 const FONT_STACKS = {
@@ -697,6 +701,13 @@ function applyStyles() {
         selectable ? '' : '*, *::before, *::after { -webkit-user-select: none !important;'
             + ' user-select: none !important }',
         theme ? `a, a:link, a:visited { color: ${theme.link} !important }` : '',
+        !typography ? '' : `html { font-size: ${typography.fontScale}% }`
+            + ` p, li, blockquote, dd, div`
+            + ` { line-height: ${typography.lineHeight} !important }`
+            + (FONT_STACKS[typography.font]
+                ? ` html, body, p, li, blockquote, dd, div, span, td, h1, h2, h3, h4,`
+                    + ` h5, h6 { font-family: ${FONT_STACKS[typography.font]} !important }`
+                : ''),
         // Two ways to theme the page: flatten every colour to the theme's ink, or keep
         // the book's own colours and let a filter turn them into greys of the theme.
         !theme ? ''

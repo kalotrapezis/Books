@@ -1620,7 +1620,12 @@ private fun ReaderScreen(
         // cover the words you just chose, and a paginated book has nothing to scroll
         // out of its way.
         val current = selection
-        val onTop = current != null && selectionLower
+        // Held, not derived: a tap clears the selection and hides the chrome in the
+        // same frame, and recomputing would move the island to the bottom halfway
+        // through the exit — so it slid out of the top and then out of the bottom.
+        val side = remember(book.id) { mutableStateOf(false) }
+        if (chromeVisible) side.value = current != null && selectionLower
+        val onTop = side.value
         AnimatedVisibility(
             visible = chromeVisible,
             enter = fadeIn() + slideInVertically { if (onTop) -it else it },
