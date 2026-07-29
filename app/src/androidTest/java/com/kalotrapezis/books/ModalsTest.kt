@@ -164,6 +164,26 @@ class ModalsTest {
         assertEquals("epubcfi(/6/4!/4/2:0)", removed)
     }
 
+    // The About page says what this is, whose work it stands on and which build it
+    // is — the last one being how a stale APK gave a whole evening to a fix that
+    // was already in the source.
+    @Test
+    fun aboutSaysWhatThisIsAndWhichBuild() {
+        var opened: String? = null
+        compose.setContent {
+            MaterialTheme { AboutDialog(onOpenLink = { opened = it }, onDismiss = {}) }
+        }
+
+        compose.onNodeWithText(
+            "Books ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+        ).assertIsDisplayed()
+        compose.onNodeWithText("GPL-3.0-or-later").assertIsDisplayed()
+        compose.onNodeWithText("foliate-js, MIT").assertIsDisplayed()
+        compose.onNodeWithText("PDF.js, Apache-2.0").assertIsDisplayed()
+        compose.onNodeWithText("Source, releases and issues").performClick()
+        assertEquals("https://github.com/kalotrapezis/Books", opened)
+    }
+
     @Test
     fun bookmarksDialogSaysWhenThereAreNone() {
         compose.setContent {

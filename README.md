@@ -12,7 +12,7 @@ This is an independent project. It is not an official Foliate application.
 No DRM. No network permission.
 
 - Branch: `android-dev`
-- Version: 0.0.4
+- Version: 0.0.5
 - Licence: `GPL-3.0-or-later`
 
 ## Screenshots
@@ -55,6 +55,10 @@ No DRM. No network permission.
 - Text size, line spacing, margins and font family.
 - Adaptive layout: single pane on a phone; on a tablet the library, the chapters
   and the notes share one sidebar beside the page, as three tabs.
+- One island holds the reader's controls, at the bottom in reach of a thumb: the
+  book, the chapter and your place along its top, and below that whatever you are
+  doing — reading, a selection, or writing a note. It steps up to the top of the
+  screen only when the selection is low enough to sit underneath it.
 - Pin the sidebar open, or unpin it so it steps aside while you read and comes
   back floating — dragged in from the left edge, or from the reader's button.
 
@@ -115,6 +119,33 @@ The second command needs a device or emulator. On MIUI/HyperOS also enable
 Developer options → Install via USB.
 
 ## Changelog
+
+### 0.0.5 — 2026-07-29
+
+One island instead of four floating pieces, and the note field fixed for good.
+
+- **The reader's controls are one island** at the bottom of the page. Its top
+  carries the book, the chapter, where you are and the bookmark ribbon; below
+  it sits whatever you are doing: reading (chapters, notes, search and the seek
+  row), a selection (the colours, read aloud, the actions), or writing a note
+  (the field, Cancel, Save). It moves to the top of the screen for one case
+  only — a selection low on the page, which it would otherwise cover, and which
+  neither a paginated book nor a chapter ending on a full page can scroll out
+  of the way.
+- The selected text no longer echoes itself back at you; it is on the page,
+  highlighted, and the room it took is the room Save and Cancel needed.
+- **Writing a note works on every device.** Android's selection action mode
+  ends for three different reasons and only two of them mean the selection is
+  over. 0.0.3 and 0.0.4 asked the page what was selected, which is right when a
+  handle is dragged and wrong when the note field takes focus — an unfocused
+  page reports nothing selected, so the panel shut the moment the field opened.
+  It now asks only while the page still holds focus. Whether you saw this
+  depended on your device: some WebViews keep the selection through focus loss,
+  which is why a phone could be fine while a tablet was not.
+- **An About page** at the foot of the library: what this is, the licence, the
+  work it stands on, and which build you are holding. Settings says the version
+  too — an APK in a download folder and a build put on over a cable are far too
+  easy to tell apart only by their behaviour.
 
 ### 0.0.4 — 2026-07-28
 

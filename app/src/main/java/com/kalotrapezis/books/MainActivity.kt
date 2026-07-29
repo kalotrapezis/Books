@@ -683,6 +683,7 @@ private fun LibraryPane(
     modifier: Modifier = Modifier,
 ) {
     var showSettings by remember { mutableStateOf(false) }
+    var showAbout by remember { mutableStateOf(false) }
     var details by remember { mutableStateOf<BookEntity?>(null) }
     details?.let { book ->
         BookDetailsDialog(
@@ -692,6 +693,19 @@ private fun LibraryPane(
                 details = null
             },
             onDismiss = { details = null },
+        )
+    }
+    val libraryContext = LocalContext.current
+    if (showAbout) {
+        AboutDialog(
+            onOpenLink = { url ->
+                // No network permission here either: the link goes to whichever app
+                // the user already trusts with the web.
+                runCatching {
+                    libraryContext.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                }
+            },
+            onDismiss = { showAbout = false },
         )
     }
     if (showSettings) {
@@ -758,9 +772,24 @@ private fun LibraryPane(
                     )
                     HorizontalDivider()
                 }
+                item { AboutLink { showAbout = true } }
             }
         }
+        // With no books there is no list to put it at the foot of.
+        if (books.isEmpty()) AboutLink { showAbout = true }
       }
+    }
+}
+
+/** Small and last, under the books: what this is and which build it is. */
+@Composable
+private fun AboutLink(onClick: () -> Unit) {
+    TextButton(onClick = onClick, modifier = Modifier.padding(top = 4.dp)) {
+        Text(
+            "About Books ${BuildConfig.VERSION_NAME}",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -1859,6 +1888,70 @@ internal fun SelectionPanel(
                     TextButton(onClick = onDismiss) { Text("Cancel") }
                 }
             }
+    }
+}
+
+/**
+ * What this is, whose work it stands on, and which build you are holding. Reached
+ * from the foot of the library, where it is out of the way but findable.
+ */
+@Composable
+internal fun AboutDialog(onOpenLink: (String) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        title = { Text("Books ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})") },
+        text = {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    "An offline reader for EPUB, PDF, comics and more, speaking " +
+                        "Foliate's reading data so highlights, notes, bookmarks and " +
+                        "your place move between a desktop and this device.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    "An independent project. Not an official Foliate application. " +
+                        "No DRM, and no Internet permission: links and lookups are " +
+                        "handed to apps that already have it.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                AboutLine("Licence", "GPL-3.0-or-later")
+                AboutLine("Reader engine", "foliate-js, MIT")
+                AboutLine("Archives", "zip.js, BSD-3-Clause · fflate, MIT")
+                AboutLine("PDF", "PDF.js, Apache-2.0")
+                AboutLine("Interface", "AndroidX and Jetpack Compose, Apache-2.0")
+                Text(
+                    "Every notice is kept in THIRD_PARTY_NOTICES.md beside the source.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(
+                    onClick = { onOpenLink("https://github.com/kalotrapezis/Books") },
+                    contentPadding = PaddingValues(0.dp),
+                ) { Text("Source, releases and issues") }
+                TextButton(
+                    onClick = {
+                        onOpenLink("https://johnfactotum.github.io/foliate/")
+                    },
+                    contentPadding = PaddingValues(0.dp),
+                ) { Text("Foliate, the reader this one follows") }
+            }
+        },
+    )
+}
+
+@Composable
+private fun AboutLine(label: String, value: String) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(value, style = MaterialTheme.typography.labelMedium)
     }
 }
 
