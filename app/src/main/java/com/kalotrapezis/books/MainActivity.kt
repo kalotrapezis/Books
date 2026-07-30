@@ -1090,6 +1090,7 @@ private fun ReaderScreen(
     var speaking by remember(book.id) { mutableStateOf(false) }
     var showAnnotations by remember(book.id) { mutableStateOf(false) }
     var selectionLower by remember(book.id) { mutableStateOf(true) }
+    var dragFraction by remember(book.id) { mutableStateOf<Float?>(null) }
     var openedAnnotation by remember(book.id) { mutableStateOf<JSONObject?>(null) }
     val readerContext = LocalContext.current
     val bookmarks = remember(book.bookmarks) { book.bookmarks.toCfiList() }
@@ -1110,7 +1111,7 @@ private fun ReaderScreen(
     val toggleSpeaking: () -> Unit = {
         speaking = !speaking
         speakCommand(if (speaking) "start" else "stop")
-        if (!speaking) speech.stop()
+        if (speaking) selection = null else speech.stop()
     }
     val runSearch: (String) -> Unit = { query ->
         searchResults = emptyList()
@@ -1405,6 +1406,10 @@ private fun ReaderScreen(
                     openedAnnotation = annotations.firstOrNull { it.optString("value") == cfi }
                 },
                 onSelected = { cfi, selectedText, lower ->
+                    // Read aloud selects each sentence as it speaks it. Those are the
+                    // reader's selections, not the user's: the island must keep the
+                    // playback controls instead of flipping to the selection panel.
+                    if (speaking) return@ReaderView
                     selection = cfi to selectedText
                     selectionLower = lower
                     // Selecting must not cost you the controls: without this a stray
@@ -1644,6 +1649,10 @@ private fun ReaderScreen(
                         chapter = chapter,
                         error = error,
                         page = when {
+                            // While the finger is on the slider the reader has not moved
+                            // yet, so the number comes from the dragged fraction.
+                            dragFraction != null ->
+                                pageLabel(dragFraction!!.toDouble(), page, pages, true)
                             printPage.isNotBlank() -> "Page $printPage"
                             page != null && pages != null -> "$page / $pages"
                             else -> ""
@@ -1761,6 +1770,7 @@ private fun ReaderScreen(
                                 pages = pages,
                                 speaking = speaking,
                                 onToggleSpeaking = toggleSpeaking,
+                                onDrag = { dragFraction = it },
                             )
                         } else {
                             // Scrolled mode has no pages to seek through, but read aloud
@@ -2729,6 +2739,7 @@ private fun ReaderControls(
     speaking: Boolean,
     onToggleSpeaking: () -> Unit,
     modifier: Modifier = Modifier,
+    onDrag: (Float?) -> Unit = {},
 ) {
     var dragged by remember { mutableStateOf<Float?>(null) }
     val haptics = LocalHapticFeedback.current
@@ -2755,6 +2766,7 @@ private fun ReaderControls(
                         val current = dragged ?: progress?.toFloat()?.coerceIn(0f, 1f) ?: 0f
                         val next = (current + (target - current) * 0.33f).coerceIn(0f, 1f)
                         dragged = next
+                        onDrag(next)
                         if (pages != null && pages > 0) {
                             val tick = (next * pages).toInt()
                             if (tick != lastTickedPage) {
@@ -2766,6 +2778,7 @@ private fun ReaderControls(
                     onValueChangeFinished = {
                         dragged?.let { onSeek(it.toDouble()) }
                         dragged = null
+                        onDrag(null)
                         lastTickedPage = null
                     },
                     enabled = enabled,
