@@ -12,7 +12,7 @@ This is an independent project. It is not an official Foliate application.
 No DRM. No network permission.
 
 - Branch: `android-dev`
-- Version: 0.0.6
+- Version: 0.0.7
 - Licence: `GPL-3.0-or-later`
 
 ## Screenshots
@@ -119,6 +119,19 @@ The second command needs a device or emulator. On MIUI/HyperOS also enable
 Developer options → Install via USB.
 
 ## Changelog
+
+### 0.0.7 — 2026-07-30
+
+Two fixes, both about the island staying where you left it.
+
+- **Read aloud keeps its controls.** Speaking selects each sentence as it goes,
+  and the island took those for your selections: on the phone it flipped to the
+  selection panel with every new sentence, so the stop button walked away
+  mid-paragraph. Selections made by the reader while it speaks are ignored now,
+  and starting playback drops any selection you had.
+- **The page slider counts again.** The header showed the reader's page, which
+  does not move until the scrub ends, so the number sat still under a moving
+  thumb. It now follows the dragged fraction while your finger is down.
 
 ### 0.0.6 — 2026-07-29
 
