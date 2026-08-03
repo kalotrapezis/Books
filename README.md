@@ -300,3 +300,46 @@ First build that is useful to read with.
 `GPL-3.0-or-later`. See [LICENSE](LICENSE) and
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the bundled `foliate-js`,
 `zip.js`, `fflate` and PDF.js notices.
+
+## What I learned from this project
+
+This project started with a simple idea. I wanted an Android reader that could
+keep my notes, highlights, bookmarks and reading position in sync with
+[Foliate](https://github.com/johnfactotum/foliate) on Linux. From that idea came
+[Books](https://github.com/kalotrapezis/Books), and what began as an application
+I wanted for myself became my summer adventure.
+
+While building it, I initially found EPUB to be a frustratingly inconsistent
+format. The same book can have a different number of pages in every application,
+depending on the screen, font, spacing and margins. This seems absurd when we
+are used to a page being a fixed point inside a book, but in reality this
+flexibility is also one of EPUB’s strengths. It allows the text to adapt to
+different screens and, more importantly, to the needs of different readers. The
+problem is therefore not that EPUB has no fixed pages, but that we continue to
+treat its fluid layout as if it were a printed book.
+
+What troubled me more was DRM. A reader can pay for a book and still be allowed
+to open it only through particular applications, devices and accounts. This is
+supposed to ensure that only the buyer reads the book, but in practice it mainly
+places restrictions on the person who bought it. If a physical edition exists,
+DRM cannot make copying impossible; it can only control the digital copy offered
+to legitimate readers. In this way, the system begins from the assumption that
+every reader is a potential thief, even though the reader is the person who
+valued the book enough to pay for it.
+
+A friend once told me about a bookseller in Greece who kept his books on a stand
+beside the road. One day, he left the stand unattended and went for a coffee.
+When his friend asked whether he was afraid that someone might steal the books,
+he replied, “People who read do not steal, and people who steal do not read.” Of
+course, this is not literally true in every case, but there is some truth in the
+way he saw his readers. He trusted that the people interested in his books were
+not his enemies.
+
+For this reason, building Books made me appreciate physical books again. They
+are more expensive, they require space and they are less convenient to carry,
+but when I buy one, it belongs to me. I can read it as many times as I want,
+lend it to a friend, give it away or keep it for many years without depending
+on an account, an application or a company’s permission. Books were created to
+carry stories and knowledge from one person to another, and after this summer
+adventure, I intend to make a greater effort to buy physical copies of the books
+I truly want to read.
